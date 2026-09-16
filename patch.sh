@@ -292,20 +292,15 @@ sed -i 's/|| mSupportedProfileType == SupportedProfileType.OFF_THE_RECORD) {/|| 
 # ---------------------------------------------------------------------------
 # Apply Vertical Stack Tab Switcher patch
 # ---------------------------------------------------------------------------
-PATCH_FILE="${SCRIPT_DIR}/patches/vertical-tab-switcher.patch"
-if [ ! -f "$PATCH_FILE" ]; then
-  PATCH_FILE="patches/vertical-tab-switcher.patch"
-fi
-
-if [ -f "$PATCH_FILE" ]; then
-  echo "==> Applying Vertical Stack Tab Switcher patch..."
-  patch -p1 --forward --no-backup-if-mismatch < "$PATCH_FILE" || {
-    echo "Warning: patch command failed, attempting with git apply..."
-    git apply --ignore-whitespace --whitespace=nowarn "$PATCH_FILE" || true
-  }
-else
-  echo "Error: patches/vertical-tab-switcher.patch not found!"
-  exit 1
+if [ -d "chrome/browser" ]; then
+  PATCH_FILE="${SCRIPT_DIR:-.}/patches/vertical-tab-switcher.patch"
+  if [ -f "$PATCH_FILE" ]; then
+    echo "==> Applying Vertical Stack Tab Switcher patch..."
+    patch -p1 --forward --no-backup-if-mismatch < "$PATCH_FILE" || {
+      echo "Warning: patch command failed, trying git apply..."
+      git apply --ignore-whitespace --whitespace=nowarn "$PATCH_FILE" || true
+    }
+  fi
 fi
 
 export PATCHED=1
