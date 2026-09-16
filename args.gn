@@ -42,3 +42,4 @@ use_rtti = false
 include_both_v8_snapshots = false
 include_both_v8_snapshots_android_secondary_abi = false
 generate_linker_map = false
+build_with_tflite_lib = false
