@@ -251,15 +251,21 @@ for root, dirs, files in os.walk("."):
                     content = fp.read()
                 changed = False
 
-                # 1. Cleanly comment out the single telemetry test element without breaking deps array
+                # 1. Cleanly disable telemetry_perf_unittests block without breaking braces
                 if "telemetry_perf_unittests" in content:
+                    # Restore clean deps syntax if modified previously
                     content = content.replace(
-                        '"//chrome/test:telemetry_perf_unittests${_target_suffix}",',
-                        '# "//chrome/test:telemetry_perf_unittests${_target_suffix}",'
+                        '# "//chrome/test:telemetry_perf_unittests${_target_suffix}",',
+                        '"//chrome/test:telemetry_perf_unittests${_target_suffix}",'
                     )
                     content = content.replace(
-                        '"//chrome/test:telemetry_perf_unittests${_target_suffix}"',
-                        '# "//chrome/test:telemetry_perf_unittests${_target_suffix}"'
+                        '# "//chrome/test:telemetry_perf_unittests${_target_suffix}"',
+                        '"//chrome/test:telemetry_perf_unittests${_target_suffix}"'
+                    )
+                    # Turn the enclosing if or line into an inert condition
+                    content = content.replace(
+                        'deps += [ "//chrome/test:telemetry_perf_unittests${_target_suffix}" ]',
+                        '# deps += [ "//chrome/test:telemetry_perf_unittests" ]\n    deps += []'
                     )
                     changed = True
 
