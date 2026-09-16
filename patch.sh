@@ -289,4 +289,23 @@ if (content::WebContents::HasLiveWebContentsForBrowserContext(profile)) { return
 sed -i 's/|| mSupportedProfileType == SupportedProfileType.REGULAR) {/|| mSupportedProfileType == SupportedProfileType.REGULAR || mSupportedProfileType == SupportedProfileType.MIXED) {/' chrome/android/java/src/org/chromium/chrome/browser/ChromeTabbedActivity.java
 sed -i 's/|| mSupportedProfileType == SupportedProfileType.OFF_THE_RECORD) {/|| mSupportedProfileType == SupportedProfileType.OFF_THE_RECORD || mSupportedProfileType == SupportedProfileType.MIXED) {/' chrome/android/java/src/org/chromium/chrome/browser/ChromeTabbedActivity.java
 
+# ---------------------------------------------------------------------------
+# Apply Vertical Stack Tab Switcher patch
+# ---------------------------------------------------------------------------
+PATCH_FILE="${SCRIPT_DIR}/patches/vertical-tab-switcher.patch"
+if [ ! -f "$PATCH_FILE" ]; then
+  PATCH_FILE="patches/vertical-tab-switcher.patch"
+fi
+
+if [ -f "$PATCH_FILE" ]; then
+  echo "==> Applying Vertical Stack Tab Switcher patch..."
+  patch -p1 --forward --no-backup-if-mismatch < "$PATCH_FILE" || {
+    echo "Warning: patch command failed, attempting with git apply..."
+    git apply --ignore-whitespace --whitespace=nowarn "$PATCH_FILE" || true
+  }
+else
+  echo "Error: patches/vertical-tab-switcher.patch not found!"
+  exit 1
+fi
+
 export PATCHED=1
