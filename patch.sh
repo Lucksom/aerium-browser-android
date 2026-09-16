@@ -290,6 +290,32 @@ sed -i 's/|| mSupportedProfileType == SupportedProfileType.REGULAR) {/|| mSuppor
 sed -i 's/|| mSupportedProfileType == SupportedProfileType.OFF_THE_RECORD) {/|| mSupportedProfileType == SupportedProfileType.OFF_THE_RECORD || mSupportedProfileType == SupportedProfileType.MIXED) {/' chrome/android/java/src/org/chromium/chrome/browser/ChromeTabbedActivity.java
 
 # ---------------------------------------------------------------------------
+# Chromium 150-153+: Disable forced Tab Group auto-creation for Classic Stack
+# ---------------------------------------------------------------------------
+if [ -d "chrome/android" ]; then
+  echo "==> Hooking TabGroupFeatureUtils to prevent auto-creation crashes..."
+  python3 - << 'EOF'
+import os
+
+for root, dirs, files in os.walk("chrome/android"):
+    for f in files:
+        if f == "TabGroupFeatureUtils.java":
+            path = os.path.join(root, f)
+            with open(path, "r", encoding="utf-8", errors="ignore") as fp:
+                content = fp.read()
+            if "isTabGroupAutoCreationEnabled()" in content:
+                # Force false to prevent crash when grid/group filter is bypassed
+                replaced = content.replace(
+                    "public static boolean isTabGroupAutoCreationEnabled() {",
+                    "public static boolean isTabGroupAutoCreationEnabled() {\n        return false;"
+                )
+                with open(path, "w", encoding="utf-8") as fp:
+                    fp.write(replaced)
+                print(f"Patched: {path}")
+EOF
+fi
+
+# ---------------------------------------------------------------------------
 # Apply Vertical Stack Tab Switcher patch
 # ---------------------------------------------------------------------------
 if [ -d "chrome/browser" ]; then
