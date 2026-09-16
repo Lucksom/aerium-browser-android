@@ -2,19 +2,19 @@ diff --git a/chrome/browser/preferences/android/java/src/org/chromium/chrome/bro
 index a4e7d91..b83f120 100644
 --- a/chrome/browser/preferences/android/java/src/org/chromium/chrome/browser/preferences/ChromePreferenceKeys.java
 +++ b/chrome/browser/preferences/android/java/src/org/chromium/chrome/browser/preferences/ChromePreferenceKeys.java
-@@ -215,6 +215,13 @@ public final class ChromePreferenceKeys {
+@@ -215,4 +215,8 @@ public final class ChromePreferenceKeys {
      public static final String TAB_MODELS_INITIALIZED = "Chrome.Tab.ModelsInitialized";
      public static final String TAB_MODELS_RESTORED = "Chrome.Tab.ModelsRestored";
  
 +    public static final String TAB_SWITCHER_TYPE = "Chrome.Tabs.TabSwitcherType";
 +    public static final int TAB_SWITCHER_TYPE_GRID_GROUPS = 0;
 +    public static final int TAB_SWITCHER_TYPE_VERTICAL_STACK = 1;
-+
++}
 diff --git a/chrome/android/java/src/org/chromium/chrome/browser/tasks/tab_management/TabUiFeatureUtilities.java b/chrome/android/java/src/org/chromium/chrome/browser/tasks/tab_management/TabUiFeatureUtilities.java
 index 738c821..ef9104b 100644
 --- a/chrome/android/java/src/org/chromium/chrome/browser/tasks/tab_management/TabUiFeatureUtilities.java
 +++ b/chrome/android/java/src/org/chromium/chrome/browser/tasks/tab_management/TabUiFeatureUtilities.java
-@@ -52,6 +52,18 @@ public class TabUiFeatureUtilities {
+@@ -52,6 +52,20 @@ public class TabUiFeatureUtilities {
          return sTabGridEnabledForTesting != null ? sTabGridEnabledForTesting : true;
      }
  
@@ -45,8 +45,9 @@ index 738c821..ef9104b 100644
 +        if (isStackTabSwitcherSelected()) {
 +            return false;
 +        }
-+        return ChromeFeatureList.sTabGroupsAndroidContinuation.isEnabled();
-+    }
+         return ChromeFeatureList.sTabGroupsAndroidContinuation.isEnabled();
+     }
+ }
 diff --git a/chrome/android/java/src/org/chromium/chrome/browser/tabmodel/TabModelFilterProvider.java b/chrome/android/java/src/org/chromium/chrome/browser/tabmodel/TabModelFilterProvider.java
 index 194a02c..8b72e11 100644
 --- a/chrome/android/java/src/org/chromium/chrome/browser/tabmodel/TabModelFilterProvider.java
@@ -63,6 +64,7 @@ index 194a02c..8b72e11 100644
 +        }
          return isIncognito ? mIncognitoTabGroupModelFilter : mNormalTabGroupModelFilter;
      }
+ }
 diff --git a/chrome/android/java/src/org/chromium/chrome/browser/settings/TabsSettingsFragment.java b/chrome/android/java/src/org/chromium/chrome/browser/settings/TabsSettingsFragment.java
 index 51a3d90..9cc7f12 100644
 --- a/chrome/android/java/src/org/chromium/chrome/browser/settings/TabsSettingsFragment.java
@@ -103,7 +105,7 @@ index 51a3d90..9cc7f12 100644
      }
 +
 +    @Override
-+    public boolean onPreferenceChange(Preference preference, Object newValue) {
+     public boolean onPreferenceChange(Preference preference, Object newValue) {
 +        if (PREF_TAB_SWITCHER_TYPE.equals(preference.getKey())) {
 +            int newType = Integer.parseInt((String) newValue);
 +            ChromeSharedPreferences.getInstance().writeInt(
@@ -121,7 +123,7 @@ index 51a3d90..9cc7f12 100644
 +            }
 +            return true;
 +        }
-+        return false;
+         return false;
      }
  }
 diff --git a/chrome/android/java/res/xml/tabs_settings_preferences.xml b/chrome/android/java/res/xml/tabs_settings_preferences.xml
@@ -189,6 +191,9 @@ index 47a9cb3..87f18a2 100644
 +      <message name="IDS_LATER" desc="Action to restart later">
 +        Later
 +      </message>
+     </messages>
+   </release>
+ </grit>
 diff --git a/chrome/android/java/src/org/chromium/chrome/browser/compositor/layouts/phone/stack/StackLayout.java b/chrome/android/java/src/org/chromium/chrome/browser/compositor/layouts/phone/stack/StackLayout.java
 new file mode 100644
 index 0000000..f5819d4
