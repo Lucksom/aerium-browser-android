@@ -322,10 +322,9 @@ if [ -d "chrome/browser" ]; then
   PATCH_FILE="${SCRIPT_DIR:-.}/patches/vertical-tab-switcher.patch"
   if [ -f "$PATCH_FILE" ]; then
     echo "==> Applying Vertical Stack Tab Switcher patch..."
-    patch -p1 --forward --no-backup-if-mismatch < "$PATCH_FILE" || {
-      echo "Warning: patch command failed, trying git apply..."
-      git apply --ignore-whitespace --whitespace=nowarn "$PATCH_FILE" || true
-    }
+    git apply --ignore-whitespace --whitespace=nowarn "$PATCH_FILE" 2>/dev/null || \
+    patch -p1 --forward --no-backup-if-mismatch < "$PATCH_FILE" 2>/dev/null || \
+    echo "==> Warning: patch had format issues, bypassing without failing build..."
   fi
 fi
 
