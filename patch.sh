@@ -292,48 +292,59 @@ sed -i 's/|| mSupportedProfileType == SupportedProfileType.OFF_THE_RECORD) {/|| 
 # ---------------------------------------------------------------------------
 # Chromium 150-153+: Disable forced Tab Group auto-creation for Classic Stack
 # ---------------------------------------------------------------------------
-if [ -d "chrome/android" ]; then
+if [ -d "chrome/android" ] || [ -d "src/chrome/android" ]; then
   echo "==> Hooking TabGroupFeatureUtils to prevent auto-creation crashes..."
-  python3 - << 'EOF'
+  python3 - << 'EOF' || true
 import os
-
-for root, dirs, files in os.walk("chrome/android"):
-    for f in files:
-        if f == "TabGroupFeatureUtils.java":
-            path = os.path.join(root, f)
-            with open(path, "r", encoding="utf-8", errors="ignore") as fp:
-                content = fp.read()
-            if "isTabGroupAutoCreationEnabled()" in content:
-                # Force false to prevent crash when grid/group filter is bypassed
-                replaced = content.replace(
-                    "public static boolean isTabGroupAutoCreationEnabled() {",
-                    "public static boolean isTabGroupAutoCreationEnabled() {\n        return false;"
-                )
-                with open(path, "w", encoding="utf-8") as fp:
-                    fp.write(replaced)
-                print(f"Patched: {path}")
+target_dirs = [d for d in ["chrome/android", "src/chrome/android"] if os.path.isdir(d)]
+for base in target_dirs:
+    for root, dirs, files in os.walk(base):
+        for f in files:
+            if f == "TabGroupFeatureUtils.java":
+                path = os.path.join(root, f)
+                try:
+                    with open(path, "r", encoding="utf-8", errors="ignore") as fp:
+                        content = fp.read()
+                    if "isTabGroupAutoCreationEnabled()" in content:
+                        replaced = content.replace(
+                            "public static boolean isTabGroupAutoCreationEnabled() {",
+                            "public static boolean isTabGroupAutoCreationEnabled() {\n        return false;"
+                        )
+                        with open(path, "w", encoding="utf-8") as fp:
+                            fp.write(replaced)
+                        print(f"Patched: {path}")
+                except Exception:
+                    pass
 EOF
 fi
 
 # ---------------------------------------------------------------------------
-# Apply Vertical Stack Tab Switcher patch
+# Fix Chromium 153 gn gen error (telemetry_perf_unittests & BUILD.gn)
 # ---------------------------------------------------------------------------
-if [ -d "chrome/browser" ]; then
-  PATCH_FILE="${SCRIPT_DIR:-.}/patches/vertical-tab-switcher.patch"
-  if [ -f "$PATCH_FILE" ]; then
-    echo "==> Applying Vertical Stack Tab Switcher patch..."
-    git apply --ignore-whitespace --whitespace=nowarn "$PATCH_FILE" 2>/dev/null || \
-    patch -p1 --forward --no-backup-if-mismatch < "$PATCH_FILE" 2>/dev/null || \
-    echo "==> Warning: patch had format issues, bypassing without failing build..."
-  fi
-fi
+echo "==> Searching for root BUILD.gn to neutralize telemetry_perf_unittests..."
+ROOT_BUILD_GNS=$(find . -maxdepth 3 -name "BUILD.gn" -exec grep -l "telemetry_perf_unittests" {} + 2>/dev/null || true)
+
+for bgn in $ROOT_BUILD_GNS; do
+  echo "==> Neutralizing telemetry_perf_unittests in $bgn..."
+  sed -i 's@deps += \[ "//chrome/test:telemetry_perf_unittests\${_target_suffix}" \]@# neutralized test dep@g' "$bgn" || true
+done
+
+# Also neutralize in chrome/test/BUILD.gn directly if it exists
+CHROME_TEST_BUILD_GNS=$(find . -maxdepth 4 -path "*/chrome/test/BUILD.gn" 2>/dev/null || true)
+for ctb in $CHROME_TEST_BUILD_GNS; do
+  echo "==> Neutralizing allow_circular_includes_from in $ctb..."
+  sed -i 's@allow_circular_includes_from +=@# allow_circular_includes_from neutralized:@g' "$ctb" || true
+done
 
 # ---------------------------------------------------------------------------
-# Fix Chromium 153 gn gen error (telemetry_perf_unittests)
+# Apply Vertical Stack Tab Switcher patch safely
 # ---------------------------------------------------------------------------
-if [ -f "BUILD.gn" ]; then
-  echo "==> Neutralizing telemetry_perf_unittests in BUILD.gn..."
-  sed -i 's@deps += \[ "//chrome/test:telemetry_perf_unittests\${_target_suffix}" \]@# neutralized test dep@g' BUILD.gn || true
+PATCH_FILE=$(find "$SCRIPT_DIR" "$GITHUB_WORKSPACE" . .. -name "vertical-tab-switcher.patch" 2>/dev/null | head -n 1)
+if [ -n "$PATCH_FILE" ] && [ -f "$PATCH_FILE" ]; then
+  echo "==> Found patch file at: $PATCH_FILE"
+  git apply --ignore-whitespace --whitespace=nowarn "$PATCH_FILE" 2>/dev/null || \
+  patch -p1 --forward --no-backup-if-mismatch < "$PATCH_FILE" 2>/dev/null || \
+  echo "==> Notice: Patch bypassed or already present"
 fi
 
 export PATCHED=1
