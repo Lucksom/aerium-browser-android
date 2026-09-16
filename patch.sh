@@ -237,53 +237,42 @@ EOF
 fi
 
 # ---------------------------------------------------------------------------
-# Fix Chromium 153 gn gen syntax errors safely in BUILD.gn files
+# Chromium 150-153+: Disable forced Tab Group auto-creation for Classic Stack
 # ---------------------------------------------------------------------------
-python3 - << 'EOF' || true
+if [ -d "chrome/android" ] || [ -d "src/chrome/android" ]; then
+  echo "==> Hooking TabGroupFeatureUtils to prevent auto-creation crashes..."
+  python3 - << 'EOF' || true
 import os
-
-for root, dirs, files in os.walk("."):
-    for f in files:
-        if f == "BUILD.gn":
-            p = os.path.join(root, f)
-            try:
-                with open(p, "r", encoding="utf-8", errors="ignore") as fp:
-                    content = fp.read()
-                changed = False
-
-                # 1. Cleanly disable telemetry_perf_unittests block without breaking braces
-                if "telemetry_perf_unittests" in content:
-                    # Restore clean deps syntax if modified previously
-                    content = content.replace(
-                        '# "//chrome/test:telemetry_perf_unittests${_target_suffix}",',
-                        '"//chrome/test:telemetry_perf_unittests${_target_suffix}",'
-                    )
-                    content = content.replace(
-                        '# "//chrome/test:telemetry_perf_unittests${_target_suffix}"',
-                        '"//chrome/test:telemetry_perf_unittests${_target_suffix}"'
-                    )
-                    # Turn the enclosing if or line into an inert condition
-                    content = content.replace(
-                        'deps += [ "//chrome/test:telemetry_perf_unittests${_target_suffix}" ]',
-                        '# deps += [ "//chrome/test:telemetry_perf_unittests" ]\n    deps += []'
-                    )
-                    changed = True
-
-                # 2. Fix allow_circular_includes_from in chrome/test/BUILD.gn
-                if "allow_circular_includes_from +=" in content:
-                    content = content.replace(
-                        "allow_circular_includes_from +=",
-                        "# allow_circular_includes_from +="
-                    )
-                    changed = True
-
-                if changed:
-                    with open(p, "w", encoding="utf-8") as fp:
-                        fp.write(content)
-                    print(f"Fixed GN syntax in: {p}")
-            except Exception:
-                pass
+target_dirs = [d for d in ["chrome/android", "src/chrome/android"] if os.path.isdir(d)]
+for base in target_dirs:
+    for root, dirs, files in os.walk(base):
+        for f in files:
+            if f == "TabGroupFeatureUtils.java":
+                path = os.path.join(root, f)
+                try:
+                    with open(path, "r", encoding="utf-8", errors="ignore") as fp:
+                        content = fp.read()
+                    if "isTabGroupAutoCreationEnabled()" in content:
+                        replaced = content.replace(
+                            "public static boolean isTabGroupAutoCreationEnabled() {",
+                            "public static boolean isTabGroupAutoCreationEnabled() {\n        return false;"
+                        )
+                        with open(path, "w", encoding="utf-8") as fp:
+                            fp.write(replaced)
+                        print(f"Patched: {path}")
+                except Exception:
+                    pass
 EOF
+fi
+
+# ---------------------------------------------------------------------------
+# Fix allow_circular_includes_from in chrome/test/BUILD.gn cleanly
+# ---------------------------------------------------------------------------
+if [ -f "chrome/test/BUILD.gn" ]; then
+  echo "==> Fixing allow_circular_includes_from in chrome/test/BUILD.gn..."
+  # Simply declare allow_circular_includes_from = [] at the top so += never fails
+  sed -i '1s/^/allow_circular_includes_from = []\n/' chrome/test/BUILD.gn || true
+fi
 
 # ---------------------------------------------------------------------------
 # Apply Vertical Stack Tab Switcher patch safely
