@@ -98,19 +98,6 @@ sed -i 's|static Intent maybeModifyCustomTabIntents(Context context, Intent inte
 # fails to compile with "cannot find symbol: method isEligible()".
 sed -i 's|private static void init(Context ctx, SpecType specType) {|private static boolean isEligible() { return false; }\n\n    private static void init(Context ctx, SpecType specType) { if (!isEligible()) { return; }|' aerium/android_config/parser/java/src/app/aerium/config/AeriumConfParser.java
 sed -i 's|if (!_omit_dex) {|if (_is_base_module \&\& !_omit_dex) {|' build/config/android/rules.gni
-# Translate is left removed. Aerium used to undo two of Vanadium's removals
-# here - one sed dropped its safelyRemovePreference() call so the translate
-# preference came back, another dropped its removeEntryForKey() so the
-# settings-search index kept pointing at it. Both are gone, so vanadium
-# patches 0145 (remove translate offer preference) and 0262/0263 (reflect
-# removed settings in search) now apply as written: no preference, and
-# nothing in settings search that leads to one.
-#
-# The rest of the feature was already off and stays off - 0082 stops
-# translations being offered, 0097 keeps the Translate toolbar button off, and
-# ungoogled's own work on the translate backend never applied here in the
-# first place. Removing the two seds is what makes it complete rather than
-# merely defaulted off.
 
 # --- Drop Vanadium's GPU feature overrides and leave Chromium's defaults.
 sed -i '/feature_overrides.EnableFeature(::features::kSkipVulkanBlocklist);/d' chrome/browser/chrome_browser_field_trials.cc
@@ -123,10 +110,6 @@ sed -i '/BASE_FEATURE(kFallbackToSWIfGLES3NotSupported,/,/#endif/ s/base::FEATUR
 sed -i 's/BASE_FEATURE(kSubmenusInAppMenu, base::FEATURE_DISABLED_BY_DEFAULT);/BASE_FEATURE(kSubmenusInAppMenu, base::FEATURE_ENABLED_BY_DEFAULT);/' chrome/browser/flags/android/chrome_feature_list.cc
 sed -i '/BASE_FEATURE(kTaskManagerClank,/,/);/ s/base::FEATURE_DISABLED_BY_DEFAULT/base::FEATURE_ENABLED_BY_DEFAULT/' chrome/browser/task_manager/common/task_manager_features.cc
 sed -i 's/BASE_FEATURE(kAndroidDevToolsFrontend, base::FEATURE_DISABLED_BY_DEFAULT);/BASE_FEATURE(kAndroidDevToolsFrontend, base::FEATURE_ENABLED_BY_DEFAULT);/' content/public/common/content_features.cc
-# Show the DevTools menu item on phones, not just tablets. At 151 this was a
-# standalone early-return inside TabbedAppMenuPropertiesDelegate.shouldShowDevToolsItem();
-# 152 moved that method to MoreToolsItemBuilder in the same package and merged
-# its three guards into one || chain, so the old anchor no longer exists.
 sed -i 's:|| !DeviceFormFactor.isNonMultiDisplayContextOnTablet(mContext):|| false:' chrome/android/java/src/org/chromium/chrome/browser/tabbed_mode/MoreToolsItemBuilder.java
 sed -i 's|boolean shouldShowDeveloperMenu() {|boolean shouldShowDeveloperMenu() { if (true) return DevToolsWindowAndroid.isDevToolsAllowedFor(getProfile(), mItemDelegate.getWebContents());|' chrome/android/java/src/org/chromium/chrome/browser/contextmenu/ChromeContextMenuPopulator.java
 sed -i 's|TabUtils.isUsingDesktopUserAgent(mItemDelegate.getWebContents())|(true \|\| TabUtils.isUsingDesktopUserAgent(mItemDelegate.getWebContents()))|' chrome/android/java/src/org/chromium/chrome/browser/contextmenu/ChromeContextMenuPopulator.java
@@ -140,55 +123,19 @@ sed -i 's|#if BUILDFLAG(IS_ANDROID)|#if 0|' content/public/renderer/render_frame
 # --- The extensions pages, laid out for a phone rather than a desktop window.
 sed -i 's|constexpr gfx::Size kMinSize = {25, 25};|constexpr gfx::Size kMinSize = {256, 25};|' chrome/browser/ui/android/extensions/extension_action_popup_contents.cc
 sed -i 's|<meta name="color-scheme" content="light dark">|&\n<meta name="viewport" content="width=device-width">|' chrome/browser/resources/extensions/extensions.html
-sed -i 's|--extensions-card-width: 400px;|--extensions-card-width: 96%;|' chrome/browser/resources/extensions/item_list.css # card width
-sed -i 's|--cr-toolbar-field-width: 680px;|--cr-toolbar-field-width: 96%;|' chrome/browser/resources/extensions/shared_vars.css # page content
-sed -i 's|padding: 24px 60px 64px;|padding: 24px 0 64px;|' chrome/browser/resources/extensions/item_list.css # content wrapper
+sed -i 's|--extensions-card-width: 400px;|--extensions-card-width: 96%;|' chrome/browser/resources/extensions/item_list.css
+sed -i 's|--cr-toolbar-field-width: 680px;|--cr-toolbar-field-width: 96%;|' chrome/browser/resources/extensions/shared_vars.css
+sed -i 's|padding: 24px 60px 64px;|padding: 24px 0 64px;|' chrome/browser/resources/extensions/item_list.css
 
 # --- Manifest V2 extensions stay installable.
 sed -i 's|uncompiled_sources_ = \[|&\n  "browser_action.json",\n  "page_action.json",|' chrome/common/extensions/api/api_sources.gni
 sed -i 's/api::webstore_private::MV2DeprecationStatus::kHardDisable)));/api::webstore_private::MV2DeprecationStatus::kNone)));/' extensions/browser/api/webstore_private/webstore_private_api.cc
 sed -i 's/bool g_allow_mv2_for_testing = false;/bool g_allow_mv2_for_testing = true;/' extensions/browser/manifest_v2_handler.cc
 
-# --- Off-store extension downloads from the Opera and Edge catalogues, and
-# from GitHub releases.
-#
-# GitHub is where an extension that is on no store actually lives - uBlock
-# Origin's own releases included - and a release asset is served from
-# objects.githubusercontent.com (or release-assets.githubusercontent.com on
-# newer routing) after a redirect from github.com, so the referrer test is what
-# usually catches it and the asset hosts are here for when it does not.
-#
-# GitHub serves those assets as application/octet-stream rather than as an
-# extension MIME type, which is a second obstacle - see the CRX-by-filename
-# block in theme.sh. Both are needed; either alone leaves the file inert.
+# --- Off-store extension downloads from the Opera and Edge catalogues, and GitHub releases.
 sed -i '/^bool OffStoreInstallAllowedByPrefs(/a\  for (const char* d : {"addons.opera.com", "operacdn.com", "microsoftedge.microsoft.com", "edge.microsoft.com", "delivery.mp.microsoft.com", "github.com", "githubusercontent.com"}) if (item.GetURL().DomainIs(d) || item.GetReferrerUrl().DomainIs(d)) return true;' chrome/browser/download/download_crx_util.cc
-# sed -i 's/bool g_allow_offstore_install_for_testing = false;/bool g_allow_offstore_install_for_testing = true;/' chrome/browser/download/download_crx_util.cc
 
 # --- Manifest V2 extensions keep working.
-#
-# Being able to INSTALL from Edge Add-ons or the Opera store, which the
-# allowlist above is for, is only half of it. Chromium switches MV2 extensions
-# off at runtime regardless of where they came from, so an install that
-# succeeds is followed by an extension that never runs. That is what people
-# hitting this are actually describing, and it got sharper when uBlock Origin's
-# MV2 build left the Chrome Web Store: the extension has nowhere official left
-# to come from AND would not run once fetched.
-#
-# The desktop repos never had this problem. ungoogled-chromium carries
-# extensions-manifestv2.patch, which does exactly this. Android is Vanadium
-# based and carries no ungoogled patches, so it inherited stock behaviour and
-# quietly disabled MV2 while Linux and Windows did not - a real three-platform
-# split, not a perception one.
-#
-# Chromium has not removed MV2 itself: extensions/common/extension.cc in 152
-# still sets kMinimumSupportedManifestVersion to 2 and IsManifestSupported()
-# accepts it. ShouldDisableLegacyExtensions() is the single switch on top.
-#
-# The testing branch is removed rather than left above the return, because with
-# an unconditional false it becomes unreachable and this tree compiles with
-# -Wunreachable-code-aggressive under -Werror. g_allow_mv2_for_testing is still
-# referenced by the AutoReset helper further down the file, so dropping this
-# use does not orphan it.
 sed -i '/^bool ShouldDisableLegacyExtensions() {$/{N;N;N;N;N;N;s%bool ShouldDisableLegacyExtensions() {\n  if (g_allow_mv2_for_testing) {\n    // We allow legacy MV2 extensions for testing purposes.\n    return false;\n  }\n\n  return true;%bool ShouldDisableLegacyExtensions() {\n  // Aerium: Manifest V2 extensions stay loadable - see patch.sh.\n  return false;%}' extensions/browser/manifest_v2_handler.cc
 
 # --- An extensions container in the phone toolbar.
@@ -204,36 +151,19 @@ sed -i '/\/\/ Draw the signin button if visible./i\        { View extContainer =
 
 # --- Extension popups, anchored even when their button is not on screen.
 sed -i '/public class RecyclerViewDelegate {$/a\public View getContainerView() { return mContainer; }' chrome/browser/ui/android/toolbar/java/src/org/chromium/chrome/browser/toolbar/extensions/ExtensionActionListCoordinator.java
-sed -i '/private void showPopupOnAnchor() {/,/private void closePopup() {/ s|if (buttonView == null) {|if (false) {|' chrome/browser/ui/android/toolbar/java/src/org/chromium/chrome/browser/toolbar/extensions/ExtensionActionListMediator.java # scoped to showPopupOnAnchor
+sed -i '/private void showPopupOnAnchor() {/,/private void closePopup() {/ s|if (buttonView == null) {|if (false) {|' chrome/browser/ui/android/toolbar/java/src/org/chromium/chrome/browser/toolbar/extensions/ExtensionActionListMediator.java
 sed -i 's|buttonView.setIsPressed(true);|if (buttonView != null) buttonView.setIsPressed(true);|' chrome/browser/ui/android/toolbar/java/src/org/chromium/chrome/browser/toolbar/extensions/ExtensionActionListMediator.java
-sed -i '/[[:space:]]mWindowAndroid,/!b;n;s|[[:space:]]buttonView,|buttonView != null ? buttonView : mRecyclerViewDelegate.getContainerView(),|' chrome/browser/ui/android/toolbar/java/src/org/chromium/chrome/browser/toolbar/extensions/ExtensionActionListMediator.java # set popup anchor
+sed -i '/[[:space:]]mWindowAndroid,/!b;n;s|[[:space:]]buttonView,|buttonView != null ? buttonView : mRecyclerViewDelegate.getContainerView(),|' chrome/browser/ui/android/toolbar/java/src/org/chromium/chrome/browser/toolbar/extensions/ExtensionActionListMediator.java
 
 # --- Omnibox results keep the mobile shape on this build.
 sed -i 's/is_desktop_android = !!BUILDFLAG(IS_DESKTOP_ANDROID);/is_desktop_android = false;/' components/omnibox/browser/zero_suggest_verbatim_match_provider.cc
 sed -i 's/is_android_mobile = is_android_any \&\& !is_android_desktop;/is_android_mobile = is_android_any \&\& is_android_desktop;/' components/omnibox/browser/autocomplete_result.cc
 
-# --- Keyboard events reaching an extension popup.
-# Upstream added this exact null check itself at Chromium 153 (and dropped the
-# unused webContents param from the same method), so the substitution has
-# nothing left to do. Removed rather than re-anchored.
-
 # --- Hide the extensions menu button while it is unpinned.
 sed -i '/Pref.PIN_EXTENSIONS_MENU_BUTTON, this::updateMenuButtonPinState);$/a\if (!mPrefService.getBoolean(Pref.PIN_EXTENSIONS_MENU_BUTTON)) { mContainer.findViewById(R.id.extensions_menu_button).setVisibility(View.GONE); }' chrome/browser/ui/android/toolbar/java/src/org/chromium/chrome/browser/toolbar/extensions/ExtensionsToolbarCoordinatorImpl.java
 sed -i '/"ExtensionsToolbarCoordinatorImpl.requestLayoutWithViewUtils()");$/a\if (!isMenuButtonPinned()) { mContainer.findViewById(R.id.extensions_menu_button).setVisibility(View.GONE); }' chrome/browser/ui/android/toolbar/java/src/org/chromium/chrome/browser/toolbar/extensions/ExtensionsToolbarCoordinatorImpl.java
 
-# --- Extensions in incognito, and incognito as its own window - unless
-# Settings > Seamless Incognito (theme.sh) says otherwise.
-#
-# process_manager.cc is untouched by that switch on purpose. Spanning
-# extensions share one background page, made by the original profile's
-# ProcessManager; the off-the-record one normally has none of its own and
-# borrows it. That borrowing needs the two profiles reachable from the same
-# place, which a standalone Incognito window's ProfileProvider never gave it -
-# so this makes the off-the-record context set up its own independently,
-# regardless of window model. In a merged window the original profile IS
-# reachable and stock sharing would work, so this becomes an unnecessary
-# second background page rather than a missing one: safe to leave as-is
-# either way, and there is no evidence yet that undoing it is required.
+# --- Extensions in incognito, and incognito as its own window.
 sed -i 's|if (!context->IsOffTheRecord()) {|if (true) {|' extensions/browser/process_manager.cc
 sed -i 's|public static boolean shouldOpenIncognitoAsWindow() {|public static boolean shouldOpenIncognitoAsWindow() { if (org.chromium.chrome.browser.preferences.ChromeSharedPreferences.getInstance().readBoolean(org.chromium.chrome.browser.preferences.ChromePreferenceKeys.AERIUM_SEAMLESS_INCOGNITO, false)) { return false; } if (true) return true;|' chrome/browser/incognito/android/java/src/org/chromium/chrome/browser/incognito/IncognitoUtils.java
 
@@ -255,29 +185,17 @@ sed -i '/extension_l10n_util::ValidateExtensionLocales($/,/error) &&$/{s|extensi
 # --- Incognito entries in the app menu.
 sed -i 's|if (!IncognitoUtils.shouldOpenIncognitoAsWindow() \|\| isIncognitoShowing()) {|if (true) {|' chrome/android/java/src/org/chromium/chrome/browser/tabbed_mode/TabbedAppMenuPropertiesDelegate.java
 sed -i 's|if (!separateIncognitoWindow \|\| isIncognito) {|if (true) {|' chrome/android/java/src/org/chromium/chrome/browser/tabbed_mode/TabbedAppMenuPropertiesDelegate.java
-# kAndroidSearchInSettings ("SearchInSettings") was removed from Chromium in
-# 151 - settings search is now unconditional, so there is no flag left to
-# force on. Verified absent from chrome_feature_list.cc/.h and
-# ChromeFeatureList.java at 151.0.7922.71. Nothing to substitute; re-add a
-# flip here only if upstream reintroduces a gate.
 
-# --- Load unpacked: resolve a document URI without walking the tree (crbug.com/406136787).
+# --- Load unpacked: resolve a document URI without walking the tree.
 sed -i 's|assert treeId.equals(documentId);|&\n if ("com.android.externalstorage.documents".equals(mAuthority)) { String fastId = mRelativePath.isEmpty() ? treeId : (treeId.endsWith(":") ? treeId + mRelativePath : treeId + "/" + mRelativePath); Uri fast = DocumentsContract.buildDocumentUriUsingTree(tree, fastId); return contentUriExists(fast) ? fast : null; }|' base/android/java/src/org/chromium/base/VirtualDocumentPath.java
 
-# crbug.com/40831291: bottom address bar - fixed upstream in Chromium 151.
-# PopupSpecCalculator now computes
-#   belowHasMoreSpace = spaceBelowAnchor >= spaceAboveAnchor;
-#   ... (idealFitsBelow != idealFitsAbove) ? idealFitsBelow : belowHasMoreSpace;
-# which is the same expression this substitution used to install
-# ((A != B) ? A : C is (A == B) ? C : A). Dropped as redundant.
-
-# --- Back out of an incognito tab to the system (crbug.com/445475304).
+# --- Back out of an incognito tab to the system.
 sed -i 's|private void onTabChanged(@Nullable Tab tab) {|private void onTabChanged(@Nullable Tab tab) { if (tab != null \&\& tab.isIncognitoBranded()) { mSystemBackPressSupplier.set(true); return; }|' chrome/browser/back_press/android/java/src/org/chromium/chrome/browser/back_press/MinimizeAppAndCloseTabBackPressHandler.java
 
-# --- Guard a null tab list in the tabs API (crbug.com/431004500).
+# --- Guard a null tab list in the tabs API.
 sed -i '/for (int i = 0; i < tab_list->GetTabCount(); ++i) {/i if (!tab_list) { continue; }' chrome/browser/extensions/api/tabs/tabs_api.cc
 
-# --- Keep an OTR profile alive while it still has WebContents (crbug.com/40274462).
+# --- Keep an OTR profile alive while it still has WebContents.
 sed -i '/CONTENT_EXPORT static WebContents\* FromRenderFrameHost(RenderFrameHost\* rfh);/a\CONTENT_EXPORT static bool HasLiveWebContentsForBrowserContext(BrowserContext* browser_context);' content/public/browser/web_contents.h
 sed -i '/^WebContentsImpl::WebContentsImpl(BrowserContext\* browser_context)/i\ bool WebContents::HasLiveWebContentsForBrowserContext(BrowserContext* browser_context) { for (WebContentsImpl* web_contents : WebContentsImpl::GetAllWebContents()) { if (web_contents->GetBrowserContext() == browser_context) { return true; } } return false; }' content/browser/web_contents/web_contents_impl.cc
 sed -i '/#include "content\/public\/browser\/render_process_host.h"/a#include "content/public/browser/web_contents.h"' chrome/browser/profiles/profile_destroyer.cc
@@ -285,7 +203,7 @@ sed -i '/^void ProfileDestroyer::DestroyOTRProfileWhenAppropriateWithTimeout($/,
 if (content::WebContents::HasLiveWebContentsForBrowserContext(profile)) { return; }
 }' chrome/browser/profiles/profile_destroyer.cc
 
-# --- Accept MIXED-profile activities on API 31 (crbug.com/444024982).
+# --- Accept MIXED-profile activities on API 31.
 sed -i 's/|| mSupportedProfileType == SupportedProfileType.REGULAR) {/|| mSupportedProfileType == SupportedProfileType.REGULAR || mSupportedProfileType == SupportedProfileType.MIXED) {/' chrome/android/java/src/org/chromium/chrome/browser/ChromeTabbedActivity.java
 sed -i 's/|| mSupportedProfileType == SupportedProfileType.OFF_THE_RECORD) {/|| mSupportedProfileType == SupportedProfileType.OFF_THE_RECORD || mSupportedProfileType == SupportedProfileType.MIXED) {/' chrome/android/java/src/org/chromium/chrome/browser/ChromeTabbedActivity.java
 
@@ -319,22 +237,47 @@ EOF
 fi
 
 # ---------------------------------------------------------------------------
-# Fix Chromium 153 gn gen error (telemetry_perf_unittests & BUILD.gn)
+# Fix Chromium 153 gn gen syntax errors safely in BUILD.gn files
 # ---------------------------------------------------------------------------
-echo "==> Searching for root BUILD.gn to neutralize telemetry_perf_unittests..."
-ROOT_BUILD_GNS=$(find . -maxdepth 3 -name "BUILD.gn" -exec grep -l "telemetry_perf_unittests" {} + 2>/dev/null || true)
+python3 - << 'EOF' || true
+import os
 
-for bgn in $ROOT_BUILD_GNS; do
-  echo "==> Neutralizing telemetry_perf_unittests in $bgn..."
-  sed -i 's@deps += \[ "//chrome/test:telemetry_perf_unittests\${_target_suffix}" \]@# neutralized test dep@g' "$bgn" || true
-done
+for root, dirs, files in os.walk("."):
+    for f in files:
+        if f == "BUILD.gn":
+            p = os.path.join(root, f)
+            try:
+                with open(p, "r", encoding="utf-8", errors="ignore") as fp:
+                    content = fp.read()
+                changed = False
 
-# Also neutralize in chrome/test/BUILD.gn directly if it exists
-CHROME_TEST_BUILD_GNS=$(find . -maxdepth 4 -path "*/chrome/test/BUILD.gn" 2>/dev/null || true)
-for ctb in $CHROME_TEST_BUILD_GNS; do
-  echo "==> Neutralizing allow_circular_includes_from in $ctb..."
-  sed -i 's@allow_circular_includes_from +=@# allow_circular_includes_from neutralized:@g' "$ctb" || true
-done
+                # 1. Cleanly comment out the single telemetry test element without breaking deps array
+                if "telemetry_perf_unittests" in content:
+                    content = content.replace(
+                        '"//chrome/test:telemetry_perf_unittests${_target_suffix}",',
+                        '# "//chrome/test:telemetry_perf_unittests${_target_suffix}",'
+                    )
+                    content = content.replace(
+                        '"//chrome/test:telemetry_perf_unittests${_target_suffix}"',
+                        '# "//chrome/test:telemetry_perf_unittests${_target_suffix}"'
+                    )
+                    changed = True
+
+                # 2. Fix allow_circular_includes_from in chrome/test/BUILD.gn
+                if "allow_circular_includes_from +=" in content:
+                    content = content.replace(
+                        "allow_circular_includes_from +=",
+                        "# allow_circular_includes_from +="
+                    )
+                    changed = True
+
+                if changed:
+                    with open(p, "w", encoding="utf-8") as fp:
+                        fp.write(content)
+                    print(f"Fixed GN syntax in: {p}")
+            except Exception:
+                pass
+EOF
 
 # ---------------------------------------------------------------------------
 # Apply Vertical Stack Tab Switcher patch safely
