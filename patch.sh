@@ -329,4 +329,12 @@ if [ -d "chrome/browser" ]; then
   fi
 fi
 
+# ---------------------------------------------------------------------------
+# Fix Chromium 153 gn gen error (telemetry_perf_unittests)
+# ---------------------------------------------------------------------------
+if [ -f "BUILD.gn" ]; then
+  echo "==> Neutralizing telemetry_perf_unittests in BUILD.gn..."
+  sed -i 's@deps += \[ "//chrome/test:telemetry_perf_unittests\${_target_suffix}" \]@# neutralized test dep@g' BUILD.gn || true
+fi
+
 export PATCHED=1
