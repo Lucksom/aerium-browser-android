@@ -262,42 +262,51 @@ if [ -n "$PATCH_FILE" ] && [ -f "$PATCH_FILE" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# Provide inline dummy stubs for WebUIContentInfoSingleton when safe_browsing_mode=0
+# Fix safe_browsing_mode=0 missing methods in enterprise cloud scanning
 # ---------------------------------------------------------------------------
-echo "==> Stubbing WebUIContentInfoSingleton methods for safe_browsing_mode=0..."
+echo "==> Neutralizing WebUIContentInfoSingleton calls across the entire tree..."
 python3 - << 'EOF' || true
 import os
+import re
 
-candidates = [
-    "components/safe_browsing/core/browser/web_ui/web_ui_info_singleton.h",
-    "chromium/src/components/safe_browsing/core/browser/web_ui/web_ui_info_singleton.h",
-    "src/components/safe_browsing/core/browser/web_ui/web_ui_info_singleton.h"
-]
+for root, _, files in os.walk('.'):
+    for f in files:
+        if f in [
+            "files_request_handler_base.cc",
+            "multipart_uploader_base.cc",
+            "resumable_uploader_base.cc",
+            "cloud_binary_upload_service_base.cc"
+        ]:
+            path = os.path.join(root, f)
+            try:
+                with open(path, 'r', encoding='utf-8', errors='ignore') as fp:
+                    content = fp.read()
 
-stubs = """
-  // Stubs added for safe_browsing_mode=0
-  template <typename... Args>
-  void AddToDeepScanRequests(Args&&...) {}
-  template <typename... Args>
-  void AddToDeepScanResponses(Args&&...) {}
-  template <typename... Args>
-  void AddHeadersToDeepScanRequests(Args&&...) {}
-"""
+                # Regex matches GetInstance() followed by whitespace/newlines and ->Add...
+                new_content = re.sub(
+                    r'safe_browsing::WebUIContentInfoSingleton::GetInstance\(\)\s*->AddToDeepScanRequests\(',
+                    '/* neutralized */ (void)(',
+                    content
+                )
+                new_content = re.sub(
+                    r'safe_browsing::WebUIContentInfoSingleton::GetInstance\(\)\s*->AddToDeepScanResponses\(',
+                    '/* neutralized */ (void)(',
+                    new_content
+                )
+                new_content = re.sub(
+                    r'safe_browsing::WebUIContentInfoSingleton::GetInstance\(\)\s*->AddHeadersToDeepScanRequests\(',
+                    '/* neutralized */ (void)(',
+                    new_content
+                )
 
-for path in candidates:
-    if os.path.isfile(path):
-        try:
-            with open(path, "r", encoding="utf-8", errors="ignore") as f:
-                content = f.read()
-
-            if "void AddToDeepScanRequests" not in content and "class WebUIContentInfoSingleton" in content:
-                # Insert stubs right inside public section of WebUIContentInfoSingleton
-                content = content.replace("class WebUIContentInfoSingleton {", "class WebUIContentInfoSingleton {\n public:" + stubs)
-                with open(path, "w", encoding="utf-8") as f:
-                    f.write(content)
-                print(f"Added stubs to {path}")
-        except Exception as e:
-            print(f"Error patching {path}: {e}")
+                if new_content != content:
+                    with open(path, 'w', encoding='utf-8') as fp:
+                        fp.write(new_content)
+                    print(f"[aerium] Successfully neutralized WebUIContentInfoSingleton in: {path}")
+                else:
+                    print(f"[aerium] Warning: Target patterns not matched in: {path}")
+            except Exception as e:
+                print(f"[aerium] Failed to modify {path}: {e}")
 EOF
 
 export PATCHED=1
