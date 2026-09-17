@@ -226,4 +226,37 @@ if [ -n "$PATCH_FILE" ] && [ -f "$PATCH_FILE" ]; then
   echo "==> Notice: Patch bypassed or already present"
 fi
 
+# ---------------------------------------------------------------------------
+# Completely bypass deep scan WebUIContentInfoSingleton calls in enterprise
+# ---------------------------------------------------------------------------
+echo "==> Completely bypassing WebUIContentInfoSingleton deep scan calls..."
+python3 - << 'EOF' || true
+import os
+for root, _, files in os.walk('.'):
+    for f in files:
+        if f in ["multipart_uploader_base.cc", "cloud_binary_upload_service_base.cc", "resumable_uploader_base.cc"]:
+            p = os.path.join(root, f)
+            try:
+                with open(p, 'r', encoding='utf-8', errors='ignore') as fp:
+                    lines = fp.readlines()
+                out = []
+                skip = False
+                for line in lines:
+                    if 'safe_browsing::WebUIContentInfoSingleton::GetInstance()' in line:
+                        skip = True
+                        out.append('    // bypassed deep scan logging\n')
+                        continue
+                    if skip:
+                        if ';' in line:
+                            skip = False
+                        continue
+                    out.append(line)
+                with open(p, 'w', encoding='utf-8') as fp:
+                    fp.writelines(out)
+                print(f"[aerium] Bypassed deep scan calls in {p}")
+            except Exception as e:
+                print(f"Error: {e}")
+EOF
+
+
 export PATCHED=1
