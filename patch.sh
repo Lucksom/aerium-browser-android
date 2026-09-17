@@ -301,4 +301,27 @@ for root, _, files in os.walk('.'):
             print(f"Error patching safe_browsing_bridge.cc: {e}")
 EOF
 
+# ---------------------------------------------------------------------------
+# Fix incomplete OtpFillingSafeBrowsingCheckerClient in chrome_otp_phish_guard_delegate.cc
+# ---------------------------------------------------------------------------
+echo "==> Defining OtpFillingSafeBrowsingCheckerClient in chrome_otp_phish_guard_delegate.cc..."
+python3 - << 'EOF' || true
+import os
+for root, _, files in os.walk('.'):
+    if "chrome_otp_phish_guard_delegate.cc" in files:
+        p = os.path.join(root, "chrome_otp_phish_guard_delegate.cc")
+        try:
+            with open(p, "r", encoding="utf-8") as f:
+                c = f.read()
+            if "class OtpFillingSafeBrowsingCheckerClient {};" not in c:
+                dummy = "\nnamespace autofill { class OtpFillingSafeBrowsingCheckerClient {}; }\n"
+                # Insert right after the includes
+                c = c.replace('#include "chrome/browser/ui/autofill/chrome_otp_phish_guard_delegate.h"', '#include "chrome/browser/ui/autofill/chrome_otp_phish_guard_delegate.h"' + dummy)
+                with open(p, "w", encoding="utf-8") as f:
+                    f.write(c)
+                print(f"[aerium] Patched OtpFillingSafeBrowsingCheckerClient in {p}")
+        except Exception as e:
+            print(f"Error patching chrome_otp_phish_guard_delegate.cc: {e}")
+EOF
+
 export PATCHED=1
