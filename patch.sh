@@ -357,4 +357,28 @@ for root, _, files in os.walk('.'):
             print(f"Error patching persistent_notification_handler.cc: {e}")
 EOF
 
+# ---------------------------------------------------------------------------
+# Fix safe_browsing_service in glic_web_client_handler.cc
+# ---------------------------------------------------------------------------
+echo "==> Bypassing safe_browsing_service in glic_web_client_handler.cc..."
+python3 - << 'EOF' || true
+import os
+for root, _, files in os.walk('.'):
+    if "glic_web_client_handler.cc" in files:
+        p = os.path.join(root, "glic_web_client_handler.cc")
+        try:
+            with open(p, "r", encoding="utf-8") as f:
+                c = f.read()
+            if "g_browser_process->safe_browsing_service()" in c:
+                # Replace the check so it simply returns early when safe browsing is disabled
+                c = c.replace("!g_browser_process->safe_browsing_service()", "true")
+                # And replace any remaining call with nullptr
+                c = c.replace("g_browser_process->safe_browsing_service()", "nullptr")
+                with open(p, "w", encoding="utf-8") as f:
+                    f.write(c)
+                print(f"[aerium] Patched glic_web_client_handler.cc in {p}")
+        except Exception as e:
+            print(f"Error patching glic_web_client_handler.cc: {e}")
+EOF
+
 export PATCHED=1
