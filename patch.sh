@@ -261,4 +261,51 @@ if [ -n "$PATCH_FILE" ] && [ -f "$PATCH_FILE" ]; then
   echo "==> Notice: Patch bypassed or already present"
 fi
 
+# ---------------------------------------------------------------------------
+# Fix safe_browsing_mode=0 missing methods in enterprise cloud scanning
+# ---------------------------------------------------------------------------
+echo "==> Neutralizing WebUIContentInfoSingleton deep scan logging for safe_browsing_mode=0..."
+python3 - << 'EOF' || true
+import os
+
+files_to_fix = [
+    "components/enterprise/connectors/core/cloud_content_scanning/files_request_handler_base.cc",
+    "components/enterprise/connectors/core/cloud_content_scanning/multipart_uploader_base.cc"
+]
+
+for rel_path in files_to_fix:
+    for prefix in [".", "chromium/src", "src"]:
+        target = os.path.join(prefix, rel_path)
+        if os.path.isfile(target):
+            try:
+                with open(target, "r", encoding="utf-8", errors="ignore") as f:
+                    content = f.read()
+
+                content = content.replace(
+                    "safe_browsing::WebUIContentInfoSingleton::GetInstance()\n      ->AddToDeepScanRequests(",
+                    "/* neutralized */ (void)("
+                ).replace(
+                    "safe_browsing::WebUIContentInfoSingleton::GetInstance()\n      ->AddToDeepScanResponses(",
+                    "/* neutralized */ (void)("
+                ).replace(
+                    "safe_browsing::WebUIContentInfoSingleton::GetInstance()->AddToDeepScanRequests(",
+                    "/* neutralized */ (void)("
+                ).replace(
+                    "safe_browsing::WebUIContentInfoSingleton::GetInstance()->AddToDeepScanResponses(",
+                    "/* neutralized */ (void)("
+                ).replace(
+                    "safe_browsing::WebUIContentInfoSingleton::GetInstance()\n      ->AddHeadersToDeepScanRequests(",
+                    "/* neutralized */ (void)("
+                ).replace(
+                    "safe_browsing::WebUIContentInfoSingleton::GetInstance()->AddHeadersToDeepScanRequests(",
+                    "/* neutralized */ (void)("
+                )
+
+                with open(target, "w", encoding="utf-8") as f:
+                    f.write(content)
+                print(f"Neutralized deep scan calls in {target}")
+            except Exception as e:
+                print(f"Failed to patch {target}: {e}")
+EOF
+
 export PATCHED=1
