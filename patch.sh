@@ -289,11 +289,14 @@ for root, _, files in os.walk('.'):
         try:
             with open(p, "r", encoding="utf-8") as f:
                 c = f.read()
-            if "g_browser_process->safe_browsing_service()" in c:
-                c = c.replace("g_browser_process->safe_browsing_service()", "nullptr")
-                with open(p, "w", encoding="utf-8") as f:
-                    f.write(c)
-                print(f"[aerium] Patched {p}")
+            # Replace reinterpret_cast with static_cast so casting nullptr is legal
+            c = c.replace("reinterpret_cast<SafeBrowsingServiceInterface*>", "static_cast<SafeBrowsingServiceInterface*>")
+            c = c.replace("reinterpret_cast<safe_browsing::SafeBrowsingServiceInterface*>", "static_cast<safe_browsing::SafeBrowsingServiceInterface*>")
+            # Replace g_browser_process->safe_browsing_service() with nullptr
+            c = c.replace("g_browser_process->safe_browsing_service()", "nullptr")
+            with open(p, "w", encoding="utf-8") as f:
+                f.write(c)
+            print(f"[aerium] Successfully patched safe_browsing_bridge.cc in {p}")
         except Exception as e:
             print(f"Error patching safe_browsing_bridge.cc: {e}")
 EOF
