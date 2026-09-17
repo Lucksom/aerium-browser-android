@@ -276,4 +276,26 @@ for root, _, files in os.walk('.'):
                 print(f"Error: {e}")
 EOF
 
+
+# ---------------------------------------------------------------------------
+# Fix safe_browsing_bridge.cc when safe_browsing_mode=0
+# ---------------------------------------------------------------------------
+echo "==> Neutralizing safe_browsing_service in safe_browsing_bridge.cc..."
+python3 - << 'EOF' || true
+import os
+for root, _, files in os.walk('.'):
+    if "safe_browsing_bridge.cc" in files:
+        p = os.path.join(root, "safe_browsing_bridge.cc")
+        try:
+            with open(p, "r", encoding="utf-8") as f:
+                c = f.read()
+            if "g_browser_process->safe_browsing_service()" in c:
+                c = c.replace("g_browser_process->safe_browsing_service()", "nullptr")
+                with open(p, "w", encoding="utf-8") as f:
+                    f.write(c)
+                print(f"[aerium] Patched {p}")
+        except Exception as e:
+            print(f"Error patching safe_browsing_bridge.cc: {e}")
+EOF
+
 export PATCHED=1
