@@ -1,3 +1,4 @@
+
 #!/bin/bash
 # Aerium for Android — staged/resumable build.
 #
@@ -229,6 +230,7 @@ EOF
 fi
 
 cd chromium/src
+source "$SCRIPT_DIR/patch.sh"
 
 # --- Resume hotfix (removable once a build that STARTED after 2026-07-20
 # goes green): theme.sh only runs during source setup, so a tree saved by an
