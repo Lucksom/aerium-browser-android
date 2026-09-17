@@ -232,9 +232,16 @@ fi
 echo "==> Completely bypassing WebUIContentInfoSingleton deep scan calls..."
 python3 - << 'EOF' || true
 import os
+files_to_fix = [
+    "files_request_handler_base.cc",
+    "multipart_uploader_base.cc",
+    "cloud_binary_upload_service_base.cc",
+    "resumable_uploader_base.cc"
+]
+
 for root, _, files in os.walk('.'):
     for f in files:
-        if f in ["multipart_uploader_base.cc", "cloud_binary_upload_service_base.cc", "resumable_uploader_base.cc"]:
+        if f in files_to_fix:
             p = os.path.join(root, f)
             try:
                 with open(p, 'r', encoding='utf-8', errors='ignore') as fp:
@@ -245,6 +252,8 @@ for root, _, files in os.walk('.'):
                     if 'safe_browsing::WebUIContentInfoSingleton::GetInstance()' in line:
                         skip = True
                         out.append('    // bypassed deep scan logging\n')
+                        if ';' in line:
+                            skip = False
                         continue
                     if skip:
                         if ';' in line:
@@ -258,5 +267,5 @@ for root, _, files in os.walk('.'):
                 print(f"Error: {e}")
 EOF
 
-
 export PATCHED=1
+    
