@@ -24,7 +24,24 @@ cp $SCRIPT_DIR/res/drawable/themed_app_icon.xml chrome/android/java/res_aerium_b
 cp $SCRIPT_DIR/res/layered_app_icon_foreground.xml chrome/android/java/res_aerium_base/mipmap-nodpi/layered_app_icon_foreground.xml 2>/dev/null || true
 for icon in $(find chrome/android/java/res_aerium_base -type f -name '*.png' 2>/dev/null); do $SCRIPT_DIR/res/icons.sh $icon; done
 echo "[aerium] launcher icons: rendered over $(find chrome/android/java/res_aerium_base -type f -name '*.png' 2>/dev/null | wc -l) PNGs"
-sed -i 's|<application |<application android:extractNativeLibs="false" |' chrome/android/java/AndroidManifest.xml 2>/dev/null || true
+
+# --- Fix duplicate extractNativeLibs in AndroidManifest.xml cleanly
+if [ -f "chrome/android/java/AndroidManifest.xml" ]; then
+  python3 - << 'EOF' || true
+import re
+p = "chrome/android/java/AndroidManifest.xml"
+try:
+    with open(p, "r", encoding="utf-8") as f:
+        c = f.read()
+    c = re.sub(r'\s*android:extractNativeLibs="[^"]*"', '', c)
+    c = c.replace('<application', '<application android:extractNativeLibs="false"', 1)
+    with open(p, "w", encoding="utf-8") as f:
+        f.write(c)
+    print("[aerium] Cleaned AndroidManifest.xml extractNativeLibs")
+except Exception as e:
+    print(f"Error cleaning manifest: {e}")
+EOF
+fi
 
 # --- Rebrand the "You and Google" settings section header.
 sed -i 's|^\(\s*\)You and Google\s*$|\1Your browser|' chrome/browser/ui/android/strings/android_chrome_strings.grd 2>/dev/null || true
