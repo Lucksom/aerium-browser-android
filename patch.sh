@@ -324,4 +324,37 @@ for root, _, files in os.walk('.'):
             print(f"Error patching chrome_otp_phish_guard_delegate.cc: {e}")
 EOF
 
+# ---------------------------------------------------------------------------
+# Fix persistent_notification_handler.cc when safe_browsing_mode=0
+# ---------------------------------------------------------------------------
+echo "==> Neutralizing suspicious notification detection in persistent_notification_handler.cc..."
+python3 - << 'EOF' || true
+import os
+for root, _, files in os.walk('.'):
+    if "persistent_notification_handler.cc" in files:
+        p = os.path.join(root, "persistent_notification_handler.cc")
+        try:
+            with open(p, "r", encoding="utf-8") as f:
+                content = f.read()
+            if "NotificationContentDetectionUkmUtil" in content:
+                # Bypass the ukm logging and auto-revoke block cleanly
+                content = content.replace(
+                    "safe_browsing::NotificationContentDetectionUkmUtil::",
+                    "// safe_browsing::NotificationContentDetectionUkmUtil::"
+                )
+                content = content.replace(
+                    "safe_browsing::kAutoRevokeSuspiciousNotification",
+                    "false && safe_browsing::kAutoRevokeSuspiciousNotification"
+                )
+                content = content.replace(
+                    "safe_browsing::kSuspiciousNotificationShowOriginalKey",
+                    "\"\""
+                )
+                with open(p, "w", encoding="utf-8") as f:
+                    f.write(content)
+                print(f"[aerium] Patched persistent_notification_handler.cc in {p}")
+        except Exception as e:
+            print(f"Error patching persistent_notification_handler.cc: {e}")
+EOF
+
 export PATCHED=1
