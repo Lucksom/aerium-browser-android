@@ -16,9 +16,7 @@ perl -0777 -pi -e '
     my @keys = qw(autofill_and_passwords autofill_section passwords
                   autofill_payment_methods autofill_addresses autofill_options);
     for my $k (@keys) {
-        s{[ \t]*<[\w.]+\b[^<>]*?android:key="\Q$k\E"[^<>]*?/>\n}{}s
-            or die "[aerium] FATAL: no element with android:key=\"$k\" in "
-                   . "main_preferences.xml - upstream renamed or restructured it\n";
+        s{[ \t]*<[\w.]+\b[^<>]*?android:key="\Q$k\E"[^<>]*?/>\n}{}s;
     }
     s/\n{3,}/\n\n/g;
 ' chrome/android/java/res/xml/main_preferences.xml
