@@ -237,42 +237,18 @@ EOF
 fi
 
 # ---------------------------------------------------------------------------
-# Chromium 150-153+: Disable forced Tab Group auto-creation for Classic Stack
-# ---------------------------------------------------------------------------
-if [ -d "chrome/android" ] || [ -d "src/chrome/android" ]; then
-  echo "==> Hooking TabGroupFeatureUtils to prevent auto-creation crashes..."
-  python3 - << 'EOF' || true
-import os
-target_dirs = [d for d in ["chrome/android", "src/chrome/android"] if os.path.isdir(d)]
-for base in target_dirs:
-    for root, dirs, files in os.walk(base):
-        for f in files:
-            if f == "TabGroupFeatureUtils.java":
-                path = os.path.join(root, f)
-                try:
-                    with open(path, "r", encoding="utf-8", errors="ignore") as fp:
-                        content = fp.read()
-                    if "isTabGroupAutoCreationEnabled()" in content:
-                        replaced = content.replace(
-                            "public static boolean isTabGroupAutoCreationEnabled() {",
-                            "public static boolean isTabGroupAutoCreationEnabled() {\n        return false;"
-                        )
-                        with open(path, "w", encoding="utf-8") as fp:
-                            fp.write(replaced)
-                        print(f"Patched: {path}")
-                except Exception:
-                    pass
-EOF
-fi
-
-# ---------------------------------------------------------------------------
 # Fix allow_circular_includes_from in chrome/test/BUILD.gn cleanly
 # ---------------------------------------------------------------------------
 if [ -f "chrome/test/BUILD.gn" ]; then
   echo "==> Fixing allow_circular_includes_from in chrome/test/BUILD.gn..."
-  # Simply declare allow_circular_includes_from = [] at the top so += never fails
   sed -i '1s/^/allow_circular_includes_from = []\n/' chrome/test/BUILD.gn || true
 fi
+
+# ---------------------------------------------------------------------------
+# Fix missing RESTART_SNACKBAR_DURATION_MS in AeriumBackupFragment
+# ---------------------------------------------------------------------------
+echo "==> Fixing RESTART_SNACKBAR_DURATION_MS in AeriumBackupFragment..."
+find . -name "AeriumBackupFragment.java" -exec sed -i 's/RESTART_SNACKBAR_DURATION_MS/6000/g' {} + 2>/dev/null || true
 
 # ---------------------------------------------------------------------------
 # Apply Vertical Stack Tab Switcher patch safely
