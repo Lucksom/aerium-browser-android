@@ -184,6 +184,15 @@ if [ -f "chrome/test/BUILD.gn" ]; then
 fi
 
 # ---------------------------------------------------------------------------
+# Enforce safe_browsing_mode = 1 across args.gn configurations
+# ---------------------------------------------------------------------------
+echo "==> Ensuring safe_browsing_mode = 1 in args.gn..."
+find . -name "args.gn" -exec sed -i 's/safe_browsing_mode = 0/safe_browsing_mode = 1/g' {} + 2>/dev/null || true
+if [ -f "out/Default/args.gn" ]; then
+  sed -i 's/safe_browsing_mode = 0/safe_browsing_mode = 1/g' out/Default/args.gn || true
+fi
+
+# ---------------------------------------------------------------------------
 # Fix missing RESTART_SNACKBAR_DURATION_MS in AeriumBackupFragment
 # ---------------------------------------------------------------------------
 echo "==> Fixing RESTART_SNACKBAR_DURATION_MS in AeriumBackupFragment..."
@@ -202,7 +211,7 @@ for root, _, files in os.walk('.'):
                     with open(path, 'w', encoding='utf-8') as fp:
                         fp.write(data)
                     print(f"Patched RESTART_SNACKBAR_DURATION_MS in: {path}")
-            except Exception as e:
+            except Exception:
                 pass
 EOF
 
