@@ -268,44 +268,37 @@ echo "==> Neutralizing WebUIContentInfoSingleton deep scan logging for safe_brow
 python3 - << 'EOF' || true
 import os
 
-files_to_fix = [
-    "components/enterprise/connectors/core/cloud_content_scanning/files_request_handler_base.cc",
-    "components/enterprise/connectors/core/cloud_content_scanning/multipart_uploader_base.cc"
+target_dirs = [
+    d for d in [
+        "components/enterprise/connectors/core/cloud_content_scanning",
+        "chromium/src/components/enterprise/connectors/core/cloud_content_scanning",
+        "src/components/enterprise/connectors/core/cloud_content_scanning"
+    ] if os.path.isdir(d)
 ]
 
-for rel_path in files_to_fix:
-    for prefix in [".", "chromium/src", "src"]:
-        target = os.path.join(prefix, rel_path)
-        if os.path.isfile(target):
-            try:
-                with open(target, "r", encoding="utf-8", errors="ignore") as f:
-                    content = f.read()
+for base_dir in target_dirs:
+    for root, _, files in os.walk(base_dir):
+        for file in files:
+            if file.endswith((".cc", ".h")):
+                path = os.path.join(root, file)
+                try:
+                    with open(path, "r", encoding="utf-8", errors="ignore") as f:
+                        content = f.read()
 
-                content = content.replace(
-                    "safe_browsing::WebUIContentInfoSingleton::GetInstance()\n      ->AddToDeepScanRequests(",
-                    "/* neutralized */ (void)("
-                ).replace(
-                    "safe_browsing::WebUIContentInfoSingleton::GetInstance()\n      ->AddToDeepScanResponses(",
-                    "/* neutralized */ (void)("
-                ).replace(
-                    "safe_browsing::WebUIContentInfoSingleton::GetInstance()->AddToDeepScanRequests(",
-                    "/* neutralized */ (void)("
-                ).replace(
-                    "safe_browsing::WebUIContentInfoSingleton::GetInstance()->AddToDeepScanResponses(",
-                    "/* neutralized */ (void)("
-                ).replace(
-                    "safe_browsing::WebUIContentInfoSingleton::GetInstance()\n      ->AddHeadersToDeepScanRequests(",
-                    "/* neutralized */ (void)("
-                ).replace(
-                    "safe_browsing::WebUIContentInfoSingleton::GetInstance()->AddHeadersToDeepScanRequests(",
-                    "/* neutralized */ (void)("
-                )
-
-                with open(target, "w", encoding="utf-8") as f:
-                    f.write(content)
-                print(f"Neutralized deep scan calls in {target}")
-            except Exception as e:
-                print(f"Failed to patch {target}: {e}")
+                    if "WebUIContentInfoSingleton" in content:
+                        for method in ["AddToDeepScanRequests", "AddToDeepScanResponses", "AddHeadersToDeepScanRequests"]:
+                            content = content.replace(
+                                f"safe_browsing::WebUIContentInfoSingleton::GetInstance()\n      ->{method}(",
+                                "/* neutralized */ (void)("
+                            ).replace(
+                                f"safe_browsing::WebUIContentInfoSingleton::GetInstance()->{method}(",
+                                "/* neutralized */ (void)("
+                            )
+                        with open(path, "w", encoding="utf-8") as f:
+                            f.write(content)
+                        print(f"Neutralized deep scan in: {path}")
+                except Exception as e:
+                    print(f"Could not patch {path}: {e}")
 EOF
 
 export PATCHED=1
