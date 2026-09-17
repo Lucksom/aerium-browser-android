@@ -1,5 +1,23 @@
 #!/bin/bash
 
+# --- Clean up duplicate insertions on resumed runs
+sed -i '/CONTENT_EXPORT static bool HasLiveWebContentsForBrowserContext/!b;n;/CONTENT_EXPORT static bool HasLiveWebContentsForBrowserContext/d' content/public/browser/web_contents.h 2>/dev/null || true
+python3 - << 'EOF' || true
+import os
+for root, _, files in os.walk('.'):
+    if "AeriumConfParser.java" in files:
+        p = os.path.join(root, "AeriumConfParser.java")
+        try:
+            with open(p, 'r') as f:
+                c = f.read()
+            while c.count("private static boolean isEligible() { return false; }") > 1:
+                c = c.replace("private static boolean isEligible() { return false; }\n\n", "", 1)
+            with open(p, 'w') as f:
+                f.write(c)
+        except Exception:
+            pass
+EOF
+
 # --- Launcher icons, and native libraries left uncompressed in the APK.
 mkdir -p chrome/android/java/res_aerium_base/drawable chrome/android/java/res_aerium_base/mipmap-nodpi
 cp $SCRIPT_DIR/res/drawable/themed_app_icon.xml chrome/android/java/res_aerium_base/drawable/themed_app_icon.xml 2>/dev/null || true
@@ -28,8 +46,10 @@ sed -i 's|if (!Intent\.ACTION_VIEW\.equals(intent\.getAction())) {|if (!Intent.A
 sed -i 's|if (urlFromIntent == null) {|if (!android.webkit.URLUtil.isNetworkUrl(urlFromIntent)) {|' aerium/chromium_src/chrome/android/java/src/org/chromium/chrome/browser/LaunchIntentDispatcherHooks.java 2>/dev/null || true
 sed -i 's|static Intent maybeModifyCustomTabIntents(Context context, Intent intent) {|static Intent maybeModifyCustomTabIntents(Context context, Intent intent) { if (!android.webkit.URLUtil.isNetworkUrl(IntentHandler.getUrlFromIntent(intent))) { return intent; }|' aerium/chromium_src/chrome/android/java/src/org/chromium/chrome/browser/LaunchIntentDispatcherHooks.java 2>/dev/null || true
 
-# --- Keep the remote config-APK mechanism permanently disabled.
-sed -i 's|private static void init(Context ctx, SpecType specType) {|private static boolean isEligible() { return false; }\n\n    private static void init(Context ctx, SpecType specType) { if (!isEligible()) { return; }|' aerium/android_config/parser/java/src/app/aerium/config/AeriumConfParser.java 2>/dev/null || true
+# --- Keep the remote config-APK mechanism permanently disabled safely.
+if [ -f aerium/android_config/parser/java/src/app/aerium/config/AeriumConfParser.java ] && ! grep -q "isEligible()" aerium/android_config/parser/java/src/app/aerium/config/AeriumConfParser.java; then
+    sed -i 's|private static void init(Context ctx, SpecType specType) {|private static boolean isEligible() { return false; }\n\n    private static void init(Context ctx, SpecType specType) { if (!isEligible()) { return; }|' aerium/android_config/parser/java/src/app/aerium/config/AeriumConfParser.java 2>/dev/null || true
+fi
 sed -i 's|if (!_omit_dex) {|if (_is_base_module \&\& !_omit_dex) {|' build/config/android/rules.gni 2>/dev/null || true
 
 # --- Drop Vanadium's GPU feature overrides and leave Chromium's defaults.
@@ -128,9 +148,13 @@ sed -i 's|private void onTabChanged(@Nullable Tab tab) {|private void onTabChang
 # --- Guard a null tab list in the tabs API.
 sed -i '/for (int i = 0; i < tab_list->GetTabCount(); ++i) {/i if (!tab_list) { continue; }' chrome/browser/extensions/api/tabs/tabs_api.cc 2>/dev/null || true
 
-# --- Keep an OTR profile alive while it still has WebContents.
-sed -i '/CONTENT_EXPORT static WebContents\* FromRenderFrameHost(RenderFrameHost\* rfh);/a\CONTENT_EXPORT static bool HasLiveWebContentsForBrowserContext(BrowserContext* browser_context);' content/public/browser/web_contents.h 2>/dev/null || true
-sed -i '/^WebContentsImpl::WebContentsImpl(BrowserContext\* browser_context)/i\ bool WebContents::HasLiveWebContentsForBrowserContext(BrowserContext* browser_context) { for (WebContentsImpl* web_contents : WebContentsImpl::GetAllWebContents()) { if (web_contents->GetBrowserContext() == browser_context) { return true; } } return false; }' content/browser/web_contents/web_contents_impl.cc 2>/dev/null || true
+# --- Keep an OTR profile alive while it still has WebContents (safely).
+if [ -f content/public/browser/web_contents.h ] && ! grep -q "HasLiveWebContentsForBrowserContext" content/public/browser/web_contents.h; then
+  sed -i '/CONTENT_EXPORT static WebContents\* FromRenderFrameHost(RenderFrameHost\* rfh);/a\CONTENT_EXPORT static bool HasLiveWebContentsForBrowserContext(BrowserContext* browser_context);' content/public/browser/web_contents.h 2>/dev/null || true
+fi
+if [ -f content/browser/web_contents/web_contents_impl.cc ] && ! grep -q "HasLiveWebContentsForBrowserContext" content/browser/web_contents/web_contents_impl.cc; then
+  sed -i '/^WebContentsImpl::WebContentsImpl(BrowserContext\* browser_context)/i\ bool WebContents::HasLiveWebContentsForBrowserContext(BrowserContext* browser_context) { for (WebContentsImpl* web_contents : WebContentsImpl::GetAllWebContents()) { if (web_contents->GetBrowserContext() == browser_context) { return true; } } return false; }' content/browser/web_contents/web_contents_impl.cc 2>/dev/null || true
+fi
 sed -i '/#include "content\/public\/browser\/render_process_host.h"/a#include "content/public/browser/web_contents.h"' chrome/browser/profiles/profile_destroyer.cc 2>/dev/null || true
 sed -i '/^void ProfileDestroyer::DestroyOTRProfileWhenAppropriateWithTimeout($/,/MaybeSendDestroyedNotification/{/  profile->MaybeSendDestroyedNotification();/i\
 if (content::WebContents::HasLiveWebContentsForBrowserContext(profile)) { return; }
@@ -156,7 +180,7 @@ for base in target_dirs:
                 try:
                     with open(path, "r", encoding="utf-8", errors="ignore") as fp:
                         content = fp.read()
-                    if "isTabGroupAutoCreationEnabled()" in content:
+                    if "isTabGroupAutoCreationEnabled()" in content and "return false;" not in content:
                         replaced = content.replace(
                             "public static boolean isTabGroupAutoCreationEnabled() {",
                             "public static boolean isTabGroupAutoCreationEnabled() {\n        return false;"
