@@ -1,60 +1,17 @@
 #!/bin/bash
 
 # --- Launcher icons, and native libraries left uncompressed in the APK.
-#
-# res_aerium_base is the correct name and is NOT a directory this script
-# invents. build.sh rewrites the Vanadium patches before applying them -
-# `replace "$SCRIPT_DIR/vanadium/patches" "vanadium" "aerium"` and its two
-# case variants, immediately before the `git am` - so the branding patch that
-# upstream writes against chrome/android/java/res_vanadium_base creates
-# res_aerium_base in the built tree, and the entries it adds to
-# chrome/android/BUILD.gn are renamed to match. By the time this runs, the
-# directory exists and holds fifteen PNGs across five densities.
-#
-# Worth writing down because the tree and the checked-in patch disagree, and
-# grepping this repository for res_aerium_base finds only these lines: the
-# wiring lives in a patch that says res_vanadium_base right up until the moment
-# it is applied. Reading either half alone suggests this block is dead code
-# writing to a directory nothing references. It is not.
-#
-# mkdir -p is kept for the two XML copies, which land in subdirectories the
-# branding patch does not necessarily create.
 mkdir -p chrome/android/java/res_aerium_base/drawable chrome/android/java/res_aerium_base/mipmap-nodpi
 cp $SCRIPT_DIR/res/drawable/themed_app_icon.xml chrome/android/java/res_aerium_base/drawable/themed_app_icon.xml
 cp $SCRIPT_DIR/res/layered_app_icon_foreground.xml chrome/android/java/res_aerium_base/mipmap-nodpi/layered_app_icon_foreground.xml
 for icon in $(find chrome/android/java/res_aerium_base -type f -name '*.png'); do $SCRIPT_DIR/res/icons.sh $icon; done
 echo "[aerium] launcher icons: rendered over $(find chrome/android/java/res_aerium_base -type f -name '*.png' | wc -l) PNGs"
 sed -i 's|<application |<application android:extractNativeLibs="false" |' chrome/android/java/AndroidManifest.xml
-# sed -i 's|Google LLC|jqssun, Google LLC|' chrome/browser/ui/android/strings/android_chrome_strings.grd
 
 # --- Rebrand the "You and Google" settings section header.
-#
-# Rebrand the "You and Google" settings section header (IDS_PREFS_SECTION_ACCOUNT_AND_GOOGLE_SERVICES).
 sed -i 's|^\(\s*\)You and Google\s*$|\1Your browser|' chrome/browser/ui/android/strings/android_chrome_strings.grd
 
 # --- Drop the "Autofill and passwords" settings entry point.
-#
-# Drop the whole "Autofill and passwords" settings entry point plus its
-# Passwords/Payment methods/Addresses/Autofill options sub-items (orders
-# 11-17 in main_preferences.xml) - Aerium doesn't ship autofill/password
-# storage UI, so there's nothing left to point users at from here.
-#
-# These six keys are exactly the set theme.sh removes at runtime in
-# MainSettings.java; the two lists have to stay in step, because leaving an
-# entry here that the Java no longer expects (or vice versa) is what made
-# Settings crash on open in the 151 build.
-#
-# Removal is driven by the keys rather than by one literal multi-line block.
-# The old pattern required the element to open with the tag name immediately
-# followed by android:key, and Chromium 152 inserted an android:fragment
-# attribute between the two - so it silently matched nothing, which is
-# precisely the failure this kind of substitution is prone to. Matching each
-# element by its key tolerates attributes being added, removed or reordered,
-# and [^<>] keeps a match from ever running past the element it started in.
-#
-# A key that matches nothing is fatal rather than skipped: a missing entry
-# means upstream renamed or restructured it, and continuing would ship the
-# preference while the Java that backs it is gone.
 perl -0777 -pi -e '
     my @keys = qw(autofill_and_passwords autofill_section passwords
                   autofill_payment_methods autofill_addresses autofill_options);
@@ -65,37 +22,19 @@ perl -0777 -pi -e '
     }
     s/\n{3,}/\n\n/g;
 ' chrome/android/java/res/xml/main_preferences.xml
-# The die above reports the operation; this reports the outcome. They are not
-# quite the same check - if upstream ever carried two elements under one of
-# these keys, each substitution would remove one and still succeed. Cheap
-# enough to keep both. Written as an if rather than `grep && {...}` so set -e
-# cannot fire on the grep that correctly finds nothing, and so verify-seds,
-# which sources this over an empty tree, sees the grep fail and moves on.
+
 if grep -qE 'android:key="(autofill_and_passwords|autofill_section|passwords|autofill_payment_methods|autofill_addresses|autofill_options)"' \
         chrome/android/java/res/xml/main_preferences.xml; then
-    echo "[aerium] FATAL: autofill entries remain in main_preferences.xml" \
-         "after the removal above" >&2
+    echo "[aerium] FATAL: autofill entries remain in main_preferences.xml after the removal above" >&2
     return 1
 fi
 
-# The platform-autofill default lives in theme.sh, which UPDATING.md names as
-# its owner. It used to be duplicated here too; since build.sh sources patch.sh
-# first, this copy won on every build and theme.sh's silently did nothing,
-# which cost a verify-seds NOOP that read like a broken pattern at every
-# Chromium bump.
-
 # --- The open-links-in-incognito rewrite applies to http/https VIEW intents only.
-sed -i 's|if (!Intent\.ACTION_VIEW\.equals(intent\.getAction())) {|if (!Intent.ACTION_VIEW.equals(intent.getAction())\n                \|\| !android.webkit.URLUtil.isNetworkUrl(IntentHandler.getUrlFromIntent(intent))) {|' aerium/chromium_src/chrome/android/java/src/org/chromium/chrome/browser/LaunchIntentDispatcherHooks.java # web URLs only
-sed -i 's|if (urlFromIntent == null) {|if (!android.webkit.URLUtil.isNetworkUrl(urlFromIntent)) {|' aerium/chromium_src/chrome/android/java/src/org/chromium/chrome/browser/LaunchIntentDispatcherHooks.java # web URLs only
-sed -i 's|static Intent maybeModifyCustomTabIntents(Context context, Intent intent) {|static Intent maybeModifyCustomTabIntents(Context context, Intent intent) { if (!android.webkit.URLUtil.isNetworkUrl(IntentHandler.getUrlFromIntent(intent))) { return intent; }|' aerium/chromium_src/chrome/android/java/src/org/chromium/chrome/browser/LaunchIntentDispatcherHooks.java # web URLs only
+sed -i 's|if (!Intent\.ACTION_VIEW\.equals(intent\.getAction())) {|if (!Intent.ACTION_VIEW.equals(intent.getAction())\n                \|\| !android.webkit.URLUtil.isNetworkUrl(IntentHandler.getUrlFromIntent(intent))) {|' aerium/chromium_src/chrome/android/java/src/org/chromium/chrome/browser/LaunchIntentDispatcherHooks.java
+sed -i 's|if (urlFromIntent == null) {|if (!android.webkit.URLUtil.isNetworkUrl(urlFromIntent)) {|' aerium/chromium_src/chrome/android/java/src/org/chromium/chrome/browser/LaunchIntentDispatcherHooks.java
+sed -i 's|static Intent maybeModifyCustomTabIntents(Context context, Intent intent) {|static Intent maybeModifyCustomTabIntents(Context context, Intent intent) { if (!android.webkit.URLUtil.isNetworkUrl(IntentHandler.getUrlFromIntent(intent))) { return intent; }|' aerium/chromium_src/chrome/android/java/src/org/chromium/chrome/browser/LaunchIntentDispatcherHooks.java
 
 # --- Keep the remote config-APK mechanism permanently disabled.
-#
-# isEligible() gates VanadiumConfParser's init() and is meant to permanently
-# disable Vanadium's remote "config APK" component/flag-fetching mechanism
-# (no code path should ever let a remote package push flags/components into
-# the browser) - so the method must be defined, not just referenced, or this
-# fails to compile with "cannot find symbol: method isEligible()".
 sed -i 's|private static void init(Context ctx, SpecType specType) {|private static boolean isEligible() { return false; }\n\n    private static void init(Context ctx, SpecType specType) { if (!isEligible()) { return; }|' aerium/android_config/parser/java/src/app/aerium/config/AeriumConfParser.java
 sed -i 's|if (!_omit_dex) {|if (_is_base_module \&\& !_omit_dex) {|' build/config/android/rules.gni
 
@@ -249,6 +188,23 @@ fi
 # ---------------------------------------------------------------------------
 echo "==> Fixing RESTART_SNACKBAR_DURATION_MS in AeriumBackupFragment..."
 find . -name "AeriumBackupFragment.java" -exec sed -i 's/RESTART_SNACKBAR_DURATION_MS/6000/g' {} + 2>/dev/null || true
+python3 - << 'EOF' || true
+import os
+for root, _, files in os.walk('.'):
+    for f in files:
+        if f == "AeriumBackupFragment.java":
+            path = os.path.join(root, f)
+            try:
+                with open(path, 'r', encoding='utf-8', errors='ignore') as fp:
+                    data = fp.read()
+                if "RESTART_SNACKBAR_DURATION_MS" in data:
+                    data = data.replace("RESTART_SNACKBAR_DURATION_MS", "6000")
+                    with open(path, 'w', encoding='utf-8') as fp:
+                        fp.write(data)
+                    print(f"Patched RESTART_SNACKBAR_DURATION_MS in: {path}")
+            except Exception as e:
+                pass
+EOF
 
 # ---------------------------------------------------------------------------
 # Apply Vertical Stack Tab Switcher patch safely
@@ -260,53 +216,5 @@ if [ -n "$PATCH_FILE" ] && [ -f "$PATCH_FILE" ]; then
   patch -p1 --forward --no-backup-if-mismatch < "$PATCH_FILE" 2>/dev/null || \
   echo "==> Notice: Patch bypassed or already present"
 fi
-
-# ---------------------------------------------------------------------------
-# Fix safe_browsing_mode=0 missing methods in enterprise cloud scanning
-# ---------------------------------------------------------------------------
-echo "==> Neutralizing WebUIContentInfoSingleton calls across the entire tree..."
-python3 - << 'EOF' || true
-import os
-import re
-
-for root, _, files in os.walk('.'):
-    for f in files:
-        if f in [
-            "files_request_handler_base.cc",
-            "multipart_uploader_base.cc",
-            "resumable_uploader_base.cc",
-            "cloud_binary_upload_service_base.cc"
-        ]:
-            path = os.path.join(root, f)
-            try:
-                with open(path, 'r', encoding='utf-8', errors='ignore') as fp:
-                    content = fp.read()
-
-                # Regex matches GetInstance() followed by whitespace/newlines and ->Add...
-                new_content = re.sub(
-                    r'safe_browsing::WebUIContentInfoSingleton::GetInstance\(\)\s*->AddToDeepScanRequests\(',
-                    '/* neutralized */ (void)(',
-                    content
-                )
-                new_content = re.sub(
-                    r'safe_browsing::WebUIContentInfoSingleton::GetInstance\(\)\s*->AddToDeepScanResponses\(',
-                    '/* neutralized */ (void)(',
-                    new_content
-                )
-                new_content = re.sub(
-                    r'safe_browsing::WebUIContentInfoSingleton::GetInstance\(\)\s*->AddHeadersToDeepScanRequests\(',
-                    '/* neutralized */ (void)(',
-                    new_content
-                )
-
-                if new_content != content:
-                    with open(path, 'w', encoding='utf-8') as fp:
-                        fp.write(new_content)
-                    print(f"[aerium] Successfully neutralized WebUIContentInfoSingleton in: {path}")
-                else:
-                    print(f"[aerium] Warning: Target patterns not matched in: {path}")
-            except Exception as e:
-                print(f"[aerium] Failed to modify {path}: {e}")
-EOF
 
 export PATCHED=1
