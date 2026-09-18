@@ -276,7 +276,6 @@ for root, _, files in os.walk('.'):
                 print(f"Error: {e}")
 EOF
 
-
 # ---------------------------------------------------------------------------
 # Fix safe_browsing_bridge.cc when safe_browsing_mode=0
 # ---------------------------------------------------------------------------
@@ -289,10 +288,8 @@ for root, _, files in os.walk('.'):
         try:
             with open(p, "r", encoding="utf-8") as f:
                 c = f.read()
-            # Replace reinterpret_cast with static_cast so casting nullptr is legal
             c = c.replace("reinterpret_cast<SafeBrowsingServiceInterface*>", "static_cast<SafeBrowsingServiceInterface*>")
             c = c.replace("reinterpret_cast<safe_browsing::SafeBrowsingServiceInterface*>", "static_cast<safe_browsing::SafeBrowsingServiceInterface*>")
-            # Replace g_browser_process->safe_browsing_service() with nullptr
             c = c.replace("g_browser_process->safe_browsing_service()", "nullptr")
             with open(p, "w", encoding="utf-8") as f:
                 f.write(c)
@@ -315,7 +312,6 @@ for root, _, files in os.walk('.'):
                 c = f.read()
             if "class OtpFillingSafeBrowsingCheckerClient {};" not in c:
                 dummy = "\nnamespace autofill { class OtpFillingSafeBrowsingCheckerClient {}; }\n"
-                # Insert right after the includes
                 c = c.replace('#include "chrome/browser/ui/autofill/chrome_otp_phish_guard_delegate.h"', '#include "chrome/browser/ui/autofill/chrome_otp_phish_guard_delegate.h"' + dummy)
                 with open(p, "w", encoding="utf-8") as f:
                     f.write(c)
@@ -337,7 +333,6 @@ for root, _, files in os.walk('.'):
             with open(p, "r", encoding="utf-8") as f:
                 content = f.read()
 
-            # Dummy types and constants so safe_browsing looks completely defined
             dummy_block = """
 namespace safe_browsing {
   struct NotificationContentDetectionUkmUtil {
@@ -349,14 +344,12 @@ namespace safe_browsing {
 }
 """
             if "struct NotificationContentDetectionUkmUtil" not in content:
-                # Insert right after the top includes
                 target = '#include "chrome/browser/notifications/persistent_notification_handler.h"'
                 if target in content:
                     content = content.replace(target, target + "\n" + dummy_block)
                 else:
                     content = dummy_block + "\n" + content
 
-            # Restore any mangled strings from previous runs
             content = content.replace("false && false && ", "")
             content = content.replace("false && ", "")
             content = content.replace("// safe_browsing::NotificationContentDetectionUkmUtil::", "safe_browsing::NotificationContentDetectionUkmUtil::")
@@ -367,8 +360,6 @@ namespace safe_browsing {
         except Exception as e:
             print(f"Error patching persistent_notification_handler.cc: {e}")
 EOF
-
-                    
 
 # ---------------------------------------------------------------------------
 # Fix safe_browsing_service in glic_web_client_handler.cc
@@ -382,14 +373,14 @@ for root, _, files in os.walk('.'):
         try:
             with open(p, "r", encoding="utf-8") as f:
                 c = f.read()
-            if "g_browser_process->safe_browsing_service()" in c:
-                # Replace the check so it simply returns early when safe browsing is disabled
-                c = c.replace("!g_browser_process->safe_browsing_service()", "true")
-                # And replace any remaining call with nullptr
-                c = c.replace("g_browser_process->safe_browsing_service()", "nullptr")
-                with open(p, "w", encoding="utf-8") as f:
-                    f.write(c)
-                print(f"[aerium] Patched glic_web_client_handler.cc in {p}")
+            # Clean up previous bad replace
+            c = c.replace("nullptr->ui_manager().get()", "nullptr")
+            # Clean up original Chromium code
+            c = c.replace("g_browser_process->safe_browsing_service()->ui_manager().get()", "nullptr")
+            c = c.replace("!g_browser_process->safe_browsing_service()", "true")
+            with open(p, "w", encoding="utf-8") as f:
+                f.write(c)
+            print(f"[aerium] Successfully patched glic_web_client_handler.cc in {p}")
         except Exception as e:
             print(f"Error patching glic_web_client_handler.cc: {e}")
 EOF
@@ -407,7 +398,6 @@ for root, _, files in os.walk('.'):
             with open(p, "r", encoding="utf-8") as f:
                 c = f.read()
             if "safe_browsing_service()" not in c:
-                # Add a dummy safe_browsing_service getter to class BrowserProcess
                 marker = "class BrowserProcess {"
                 injection = "class BrowserProcess {\n public:\n  virtual void* safe_browsing_service() { return nullptr; }"
                 c = c.replace(marker, injection, 1)
@@ -416,21 +406,6 @@ for root, _, files in os.walk('.'):
                 print(f"[aerium] Injected dummy safe_browsing_service in {p}")
         except Exception as e:
             print(f"Error patching browser_process.h: {e}")
-
-    # Also patch glic_web_client_handler.cc directly so it returns early
-    if "glic_web_client_handler.cc" in files:
-        p = os.path.join(root, "glic_web_client_handler.cc")
-        try:
-            with open(p, "r", encoding="utf-8") as f:
-                c = f.read()
-            if "!g_browser_process->safe_browsing_service()" in c:
-                c = c.replace("!g_browser_process->safe_browsing_service()", "true")
-                c = c.replace("g_browser_process->safe_browsing_service()", "nullptr")
-                with open(p, "w", encoding="utf-8") as f:
-                    f.write(c)
-                print(f"[aerium] Patched glic_web_client_handler.cc in {p}")
-        except Exception as e:
-            print(f"Error patching glic_web_client_handler.cc: {e}")
 EOF
 
 export PATCHED=1
