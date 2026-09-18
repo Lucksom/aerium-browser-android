@@ -195,7 +195,7 @@ for base in target_dirs:
             if f == "TabGroupFeatureUtils.java":
                 path = os.path.join(root, f)
                 try:
-                    with open(path, "r", encoding="utf-8") as fp:
+                    with open(path, "r", encoding="utf-8", errors="ignore") as fp:
                         content = fp.read()
                     if "isTabGroupAutoCreationEnabled()" in content and "return false;" not in content:
                         replaced = content.replace(
@@ -321,49 +321,13 @@ for root, _, files in os.walk('.'):
 EOF
 
 # ---------------------------------------------------------------------------
-# Fix persistent_notification_handler.cc cleanly
+# All-In-One Fix for Safe Browsing / Glic / Persistent Notification
 # ---------------------------------------------------------------------------
-echo "==> Neutralizing suspicious notification detection in persistent_notification_handler.cc..."
+echo "==> Applying all-in-one comprehensive fix for safe_browsing_mode=0..."
 python3 - << 'EOF' || true
-import os, subprocess
-for root, _, files in os.walk('.'):
-    if "persistent_notification_handler.cc" in files:
-        p = os.path.join(root, "persistent_notification_handler.cc")
-        try:
-            subprocess.run(["git", "checkout", "--", p], capture_output=True)
-            with open(p, "r", encoding="utf-8") as f:
-                content = f.read()
+import os, re, subprocess
 
-            dummy_block = """
-#include "base/feature_list.h"
-namespace safe_browsing {
-  class NotificationContentDetectionUkmUtil {
-   public:
-    template <typename... Args>
-    static void RecordSuspiciousNotificationInteractionUkm(Args&&...) {}
-  };
-  inline constexpr base::Feature kAutoRevokeSuspiciousNotification{
-      "AutoRevokeSuspiciousNotification", base::FEATURE_DISABLED_BY_DEFAULT, false,
-      base::internal::FeatureMacroHandshake::kPass};
-  inline constexpr const char* kSuspiciousNotificationShowOriginalKey = "";
-}
-"""
-            target = '#include "chrome/browser/notifications/persistent_notification_handler.h"'
-            content = content.replace(target, target + "\n" + dummy_block, 1)
-
-            with open(p, "w", encoding="utf-8") as f:
-                f.write(content)
-            print(f"[aerium] Fixed persistent_notification_handler.cc in {p}")
-        except Exception as e:
-            print(f"Error patching persistent_notification_handler.cc: {e}")
-EOF
-
-# ---------------------------------------------------------------------------
-# Fix glic_web_client_handler.cc cleanly (-Wunreachable-code safe)
-# ---------------------------------------------------------------------------
-echo "==> Fixing glic_web_client_handler.cc..."
-python3 - << 'EOF' || true
-import os, subprocess
+# 1. Fix glic_web_client_handler.cc
 for root, _, files in os.walk('.'):
     if "glic_web_client_handler.cc" in files:
         p = os.path.join(root, "glic_web_client_handler.cc")
@@ -371,16 +335,68 @@ for root, _, files in os.walk('.'):
             subprocess.run(["git", "checkout", "--", p], capture_output=True)
             with open(p, "r", encoding="utf-8") as f:
                 c = f.read()
-            # Wrap in double-parentheses ((true)) to silence Clang's -Wunreachable-code warning
-            c = c.replace(
-                "if (!g_browser_process->safe_browsing_service()) {",
-                "if ((true)) { return; }\nif (!g_browser_process->safe_browsing_service()) {"
-            )
+
+            pattern = r'(\s*if \(!g_browser_process->safe_browsing_service\(\)\) \{[\s\S]*?ui_manager\(\)\.get\(\);)'
+            if re.search(pattern, c):
+                c = re.sub(
+                    pattern,
+                    r'/* safe_browsing bypassed for safe_browsing_mode=0 */\n    safe_browsing::SafeBrowsingUIManager* ui_manager = nullptr;\n    if constexpr (false) {',
+                    c
+                )
+            else:
+                c = c.replace(
+                    "if (!g_browser_process->safe_browsing_service()) {",
+                    "if constexpr (true) { return; }\n    if (!g_browser_process->safe_browsing_service()) {"
+                )
             with open(p, "w", encoding="utf-8") as f:
                 f.write(c)
-            print(f"[aerium] Fixed glic_web_client_handler.cc in {p}")
+            print(f"[aerium] Cleanly patched glic_web_client_handler.cc in {p}")
         except Exception as e:
-            print(f"Error patching glic_web_client_handler.cc: {e}")
+            print(f"Error patching glic_web_client_handler: {e}")
+
+# 2. Fix persistent_notification_handler.cc
+for root, _, files in os.walk('.'):
+    if "persistent_notification_handler.cc" in files:
+        p = os.path.join(root, "persistent_notification_handler.cc")
+        try:
+            subprocess.run(["git", "checkout", "--", p], capture_output=True)
+            with open(p, "r", encoding="utf-8") as f:
+                c = f.read()
+
+            target = "safe_browsing::NotificationContentDetectionUkmUtil::"
+            if target in c:
+                idx = c.find(target)
+                block_start = c.rfind("\n", 0, idx)
+                block_end = c.find("}\n", idx)
+                if block_end != -1:
+                    block_end = c.find("}\n", block_end + 2)
+                    if block_end != -1:
+                        c = c[:block_start] + "\n#if 0\n" + c[block_start:block_end+2] + "\n#endif\n" + c[block_end+2:]
+
+            with open(p, "w", encoding="utf-8") as f:
+                f.write(c)
+            print(f"[aerium] Preprocessor-isolated persistent_notification_handler.cc in {p}")
+        except Exception as e:
+            print(f"Error patching persistent_notification_handler: {e}")
+
+# 3. Proactive sweep across chrome/browser for safe_browsing_service() calls
+for root, _, files in os.walk('chrome/browser'):
+    for f in files:
+        if f.endswith('.cc') and f not in ["glic_web_client_handler.cc", "persistent_notification_handler.cc"]:
+            p = os.path.join(root, f)
+            try:
+                with open(p, 'r', encoding='utf-8', errors='ignore') as fp:
+                    content = fp.read()
+                if "g_browser_process->safe_browsing_service()" in content:
+                    new_content = content.replace(
+                        "g_browser_process->safe_browsing_service()",
+                        "static_cast<safe_browsing::SafeBrowsingService*>(nullptr)"
+                    )
+                    with open(p, 'w', encoding='utf-8') as fp:
+                        fp.write(new_content)
+                    print(f"[aerium] Proactively neutralized safe_browsing_service in {p}")
+            except Exception:
+                pass
 EOF
 
 export PATCHED=1
