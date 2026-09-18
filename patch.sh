@@ -1,6 +1,5 @@
 #!/bin/bash
 
-# --- Clean up duplicate insertions on resumed runs
 sed -i '/CONTENT_EXPORT static bool HasLiveWebContentsForBrowserContext/!b;n;/CONTENT_EXPORT static bool HasLiveWebContentsForBrowserContext/d' content/public/browser/web_contents.h 2>/dev/null || true
 python3 - << 'EOF' || true
 import os
@@ -325,42 +324,42 @@ EOF
 # ---------------------------------------------------------------------------
 echo "==> Neutralizing suspicious notification detection in persistent_notification_handler.cc..."
 python3 - << 'EOF' || true
-import os
+import os, subprocess
 for root, _, files in os.walk('.'):
     if "persistent_notification_handler.cc" in files:
         p = os.path.join(root, "persistent_notification_handler.cc")
         try:
+            
+            subprocess.run(["git", "checkout", "--", p], capture_output=True)
             with open(p, "r", encoding="utf-8") as f:
                 content = f.read()
 
             dummy_block = """
+#include "base/feature_list.h"
 namespace safe_browsing {
-  struct NotificationContentDetectionUkmUtil {
+  class NotificationContentDetectionUkmUtil {
+   public:
     template <typename... Args>
     static void RecordSuspiciousNotificationInteractionUkm(Args&&...) {}
   };
-  inline constexpr bool kAutoRevokeSuspiciousNotification = false;
+  inline constexpr base::Feature kAutoRevokeSuspiciousNotification{
+      "AutoRevokeSuspiciousNotification", base::FEATURE_DISABLED_BY_DEFAULT};
   inline constexpr const char* kSuspiciousNotificationShowOriginalKey = "";
 }
 """
-            if "struct NotificationContentDetectionUkmUtil" not in content:
-                target = '#include "chrome/browser/notifications/persistent_notification_handler.h"'
-                if target in content:
-                    content = content.replace(target, target + "\n" + dummy_block)
-                else:
-                    content = dummy_block + "\n" + content
-
-            content = content.replace("false && false && ", "")
-            content = content.replace("false && ", "")
-            content = content.replace("// safe_browsing::NotificationContentDetectionUkmUtil::", "safe_browsing::NotificationContentDetectionUkmUtil::")
+            target = '#include "chrome/browser/notifications/persistent_notification_handler.h"'
+            if target in content:
+                content = content.replace(target, target + "\n" + dummy_block, 1)
+            else:
+                content = dummy_block + "\n" + content
 
             with open(p, "w", encoding="utf-8") as f:
                 f.write(content)
-            print(f"[aerium] Successfully declared dummy UKM in {p}")
+            print(f"[aerium] Freshly patched persistent_notification_handler.cc in {p}")
         except Exception as e:
             print(f"Error patching persistent_notification_handler.cc: {e}")
 EOF
-
+  
 # ---------------------------------------------------------------------------
 # Fix safe_browsing_service in glic_web_client_handler.cc
 # ---------------------------------------------------------------------------
