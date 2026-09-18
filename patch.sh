@@ -321,39 +321,47 @@ for root, _, files in os.walk('.'):
 EOF
 
 # ---------------------------------------------------------------------------
-# Complete Sanitization & Fix for glic_web_client_handler.cc
+# Complete Preprocessor Fix for glic_web_client_handler.cc
 # ---------------------------------------------------------------------------
-echo "==> Sanitizing and fixing glic_web_client_handler.cc..."
+echo "==> Isolating safe browsing in glic_web_client_handler.cc with preprocessor..."
 python3 - << 'EOF' || true
-import os, re
+import os, subprocess
 for root, _, files in os.walk('.'):
     if "glic_web_client_handler.cc" in files:
         p = os.path.join(root, "glic_web_client_handler.cc")
         try:
+            # Revert any broken edits so line numbers and braces are factory-clean
+            subprocess.run(["git", "checkout", "--", p], capture_output=True)
             with open(p, "r", encoding="utf-8") as f:
-                c = f.read()
+                lines = f.readlines()
 
-            # 1. Clean out any previous broken constructs (nullptr; or if (true))
-            c = re.sub(r'^\s*nullptr;\s*$', '', c, flags=re.MULTILINE)
-            c = c.replace("if ((true)) { return; }", "")
-            c = c.replace("if (true) { return; }", "")
+            out = []
+            skipping = False
+            for line in lines:
+                # Line 1190: Start of safe browsing check
+                if "g_browser_process->safe_browsing_service()" in line and not skipping:
+                    out.append("#if 0 // safe_browsing_bypassed\n")
+                    skipping = True
+                
+                # Line 1252: End of the safe browsing ui_manager block
+                if skipping and "if (ui_manager) {" in line:
+                    # Let the block continue until the closing brace of if (ui_manager)
+                    pass
 
-            # 2. Match the entire check + ui_manager block and replace with a simple nullptr assignment
-            # This completely avoids unreachable-code warnings or missing member calls
-            pattern = r'if\s*\(!g_browser_process->safe_browsing_service\(\)\)\s*\{[\s\S]*?ui_manager\(\)\.get\(\);'
-            if re.search(pattern, c):
-                c = re.sub(pattern, 'safe_browsing::SafeBrowsingUIManager* ui_manager = nullptr;', c)
-            else:
-                # If already modified by earlier partial replaces, normalize it cleanly:
-                c = re.sub(r'safe_browsing::SafeBrowsingUIManager\*\s+ui_manager\s*=\s*[^;]+;', 'safe_browsing::SafeBrowsingUIManager* ui_manager = nullptr;', c)
-                c = re.sub(r'if\s*\(!g_browser_process->safe_browsing_service\(\)\)\s*\{\s*return;\s*\}', '', c)
+                out.append(line)
+
+                if skipping and line.strip() == "}":
+                    # Close the #if 0 right after the closing brace
+                    out.append("#endif\n")
+                    skipping = False
 
             with open(p, "w", encoding="utf-8") as f:
-                f.write(c)
-            print(f"[aerium] Successfully sanitized {p}")
+                f.writelines(out)
+            print(f"[aerium] Successfully preprocessed {p}")
         except Exception as e:
             print(f"Error patching glic_web_client_handler.cc: {e}")
 EOF
+   
 
 # ---------------------------------------------------------------------------
 # Complete Sanitization & Fix for persistent_notification_handler.cc
