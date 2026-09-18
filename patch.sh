@@ -321,65 +321,98 @@ for root, _, files in os.walk('.'):
 EOF
 
 # ---------------------------------------------------------------------------
-# All-In-One Fix for Safe Browsing / Glic / Persistent Notification
+# Complete Sanitization & Fix for glic_web_client_handler.cc
 # ---------------------------------------------------------------------------
-echo "==> Applying all-in-one comprehensive fix for safe_browsing_mode=0..."
+echo "==> Sanitizing and fixing glic_web_client_handler.cc..."
 python3 - << 'EOF' || true
-import os, re, subprocess
-
-# 1. Fix glic_web_client_handler.cc
+import os, re
 for root, _, files in os.walk('.'):
     if "glic_web_client_handler.cc" in files:
         p = os.path.join(root, "glic_web_client_handler.cc")
         try:
-            subprocess.run(["git", "checkout", "--", p], capture_output=True)
             with open(p, "r", encoding="utf-8") as f:
                 c = f.read()
 
-            pattern = r'(\s*if \(!g_browser_process->safe_browsing_service\(\)\) \{[\s\S]*?ui_manager\(\)\.get\(\);)'
+            # 1. Clean out any previous broken constructs (nullptr; or if (true))
+            c = re.sub(r'^\s*nullptr;\s*$', '', c, flags=re.MULTILINE)
+            c = c.replace("if ((true)) { return; }", "")
+            c = c.replace("if (true) { return; }", "")
+
+            # 2. Match the entire check + ui_manager block and replace with a simple nullptr assignment
+            # This completely avoids unreachable-code warnings or missing member calls
+            pattern = r'if\s*\(!g_browser_process->safe_browsing_service\(\)\)\s*\{[\s\S]*?ui_manager\(\)\.get\(\);'
             if re.search(pattern, c):
-                c = re.sub(
-                    pattern,
-                    r'/* safe_browsing bypassed for safe_browsing_mode=0 */\n    safe_browsing::SafeBrowsingUIManager* ui_manager = nullptr;\n    if constexpr (false) {',
-                    c
-                )
+                c = re.sub(pattern, 'safe_browsing::SafeBrowsingUIManager* ui_manager = nullptr;', c)
             else:
-                c = c.replace(
-                    "if (!g_browser_process->safe_browsing_service()) {",
-                    "if constexpr (true) { return; }\n    if (!g_browser_process->safe_browsing_service()) {"
-                )
+                # If already modified by earlier partial replaces, normalize it cleanly:
+                c = re.sub(r'safe_browsing::SafeBrowsingUIManager\*\s+ui_manager\s*=\s*[^;]+;', 'safe_browsing::SafeBrowsingUIManager* ui_manager = nullptr;', c)
+                c = re.sub(r'if\s*\(!g_browser_process->safe_browsing_service\(\)\)\s*\{\s*return;\s*\}', '', c)
+
             with open(p, "w", encoding="utf-8") as f:
                 f.write(c)
-            print(f"[aerium] Cleanly patched glic_web_client_handler.cc in {p}")
+            print(f"[aerium] Successfully sanitized {p}")
         except Exception as e:
-            print(f"Error patching glic_web_client_handler: {e}")
+            print(f"Error patching glic_web_client_handler.cc: {e}")
+EOF
 
-# 2. Fix persistent_notification_handler.cc
+# ---------------------------------------------------------------------------
+# Complete Sanitization & Fix for persistent_notification_handler.cc
+# ---------------------------------------------------------------------------
+echo "==> Sanitizing and fixing persistent_notification_handler.cc..."
+python3 - << 'EOF' || true
+import os, re
 for root, _, files in os.walk('.'):
     if "persistent_notification_handler.cc" in files:
         p = os.path.join(root, "persistent_notification_handler.cc")
         try:
-            subprocess.run(["git", "checkout", "--", p], capture_output=True)
             with open(p, "r", encoding="utf-8") as f:
                 c = f.read()
 
-            target = "safe_browsing::NotificationContentDetectionUkmUtil::"
-            if target in c:
-                idx = c.find(target)
-                block_start = c.rfind("\n", 0, idx)
-                block_end = c.find("}\n", idx)
-                if block_end != -1:
-                    block_end = c.find("}\n", block_end + 2)
+            # Clean out any old injected namespace dummy definitions
+            c = re.sub(r'namespace safe_browsing\s*\{[\s\S]*?kSuspiciousNotificationShowOriginalKey\s*=\s*"";\s*\}', '', c)
+
+            # Preprocessor-isolate the suspicious notification detection block so the compiler completely skips it
+            if "#if 0 // safe_browsing_bypassed" not in c:
+                target = "safe_browsing::NotificationContentDetectionUkmUtil::"
+                if target in c:
+                    idx = c.find(target)
+                    block_start = c.rfind("\n", 0, idx)
+                    block_end = c.find("}\n", idx)
                     if block_end != -1:
-                        c = c[:block_start] + "\n#if 0\n" + c[block_start:block_end+2] + "\n#endif\n" + c[block_end+2:]
+                        block_end = c.find("}\n", block_end + 2)
+                        if block_end != -1:
+                            c = c[:block_start] + "\n#if 0 // safe_browsing_bypassed\n" + c[block_start:block_end+2] + "\n#endif\n" + c[block_end+2:]
 
             with open(p, "w", encoding="utf-8") as f:
                 f.write(c)
-            print(f"[aerium] Preprocessor-isolated persistent_notification_handler.cc in {p}")
+            print(f"[aerium] Successfully sanitized {p}")
         except Exception as e:
-            print(f"Error patching persistent_notification_handler: {e}")
+            print(f"Error patching persistent_notification_handler.cc: {e}")
+EOF
 
-# 3. Proactive sweep across chrome/browser for safe_browsing_service() calls
+# ---------------------------------------------------------------------------
+# Global immunity for safe_browsing_service across all browser files
+# ---------------------------------------------------------------------------
+echo "==> Ensuring safe_browsing_service exists in BrowserProcess..."
+python3 - << 'EOF' || true
+import os
+for root, _, files in os.walk('.'):
+    if "browser_process.h" in files:
+        p = os.path.join(root, "browser_process.h")
+        try:
+            with open(p, "r", encoding="utf-8") as f:
+                c = f.read()
+            if "safe_browsing_service()" not in c:
+                marker = "class BrowserProcess {"
+                injection = "class BrowserProcess {\n public:\n  virtual void* safe_browsing_service() { return nullptr; }"
+                c = c.replace(marker, injection, 1)
+                with open(p, "w", encoding="utf-8") as f:
+                    f.write(c)
+                print(f"[aerium] Injected dummy safe_browsing_service in {p}")
+        except Exception as e:
+            print(f"Error patching browser_process.h: {e}")
+
+# Sweep all remaining files in chrome/browser for any dangling safe_browsing_service calls
 for root, _, files in os.walk('chrome/browser'):
     for f in files:
         if f.endswith('.cc') and f not in ["glic_web_client_handler.cc", "persistent_notification_handler.cc"]:
@@ -388,13 +421,13 @@ for root, _, files in os.walk('chrome/browser'):
                 with open(p, 'r', encoding='utf-8', errors='ignore') as fp:
                     content = fp.read()
                 if "g_browser_process->safe_browsing_service()" in content:
-                    new_content = content.replace(
+                    content = content.replace(
                         "g_browser_process->safe_browsing_service()",
                         "static_cast<safe_browsing::SafeBrowsingService*>(nullptr)"
                     )
                     with open(p, 'w', encoding='utf-8') as fp:
-                        fp.write(new_content)
-                    print(f"[aerium] Proactively neutralized safe_browsing_service in {p}")
+                        fp.write(content)
+                    print(f"[aerium] Sanitized safe_browsing_service call in {p}")
             except Exception:
                 pass
 EOF
