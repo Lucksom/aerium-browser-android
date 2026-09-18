@@ -321,44 +321,46 @@ for root, _, files in os.walk('.'):
 EOF
 
 # ---------------------------------------------------------------------------
-#  Fix for glic_web_client_handler.cc
+# Clean restore and header injection for glic_web_client_handler.cc
 # ---------------------------------------------------------------------------
-echo "==> Isolating safe browsing in glic_web_client_handler.cc..."
+echo "==> Restoring and safely providing dummy SafeBrowsingService to glic..."
 python3 - << 'EOF' || true
-import os
+import os, subprocess
 for root, _, files in os.walk('.'):
     if "glic_web_client_handler.cc" in files:
         p = os.path.join(root, "glic_web_client_handler.cc")
         try:
+            # 1. ALWAYS revert glic_web_client_handler.cc back to clean stock code
+            subprocess.run(["git", "checkout", "--", p], capture_output=True)
             with open(p, "r", encoding="utf-8") as f:
                 c = f.read()
 
-            # Clean up any broken half-edits from earlier runs
-            c = c.replace("safe_browsing::SafeBrowsingUIManager* ui_manager = nullptr;", "")
-            c = c.replace("if ((true)) { return; }", "")
-            c = c.replace("if (true) { return; }", "")
-            c = c.replace("nullptr;\n", "")
-            c = c.replace("nullptr;", "")
+            # 2. Inject dummy SafeBrowsingService definition right after includes
+            dummy = """
+namespace safe_browsing {
+class SafeBrowsingUIManager;
+class FakeSafeBrowsingService {
+ public:
+  scoped_refptr<SafeBrowsingUIManager> ui_manager() { return nullptr; }
+};
+}
+"""
+            target = '#include "chrome/browser/glic/host/glic_web_client_handler.h"'
+            if target in c and "FakeSafeBrowsingService" not in c:
+                c = c.replace(target, target + "\n" + dummy)
 
-            # Provide a safe dummy pointer and wrap the rest in #if 0 ... #endif
-            target = "if (ui_manager) {"
-            if target in c and "#if 0 // glic_safe_browsing_bypassed" not in c:
-                idx = c.find(target)
-                end_idx = c.find("}\n", idx + 50)
-                if end_idx != -1:
-                    replacement = "safe_browsing::SafeBrowsingUIManager* ui_manager = nullptr;\n#if 0 // glic_safe_browsing_bypassed\n" + c[idx:end_idx+2] + "\n#endif\n"
-                    c = c[:idx] + replacement + c[end_idx+2:]
-            elif "safe_browsing::SafeBrowsingUIManager* ui_manager" not in c:
-                # Fallback: ensure ui_manager is at least defined as nullptr
-                c = c.replace("if (ui_manager) {", "safe_browsing::SafeBrowsingUIManager* ui_manager = nullptr;\n    if (false && ui_manager) {")
+            # 3. Replace only the single method call to return the fake pointer
+            c = c.replace(
+                "g_browser_process->safe_browsing_service()",
+                "reinterpret_cast<safe_browsing::FakeSafeBrowsingService*>(nullptr)"
+            )
 
             with open(p, "w", encoding="utf-8") as f:
                 f.write(c)
-            print(f"[aerium] Successfully isolated glic_web_client_handler.cc in {p}")
+            print(f"[aerium] Perfectly restored and header-injected {p}")
         except Exception as e:
-            print(f"Error patching glic_web_client_handler.cc: {e}")
+            print(f"Error repairing glic_web_client_handler.cc: {e}")
 EOF
-   
 
 # ---------------------------------------------------------------------------
 # Complete Sanitization & Fix for persistent_notification_handler.cc
