@@ -321,43 +321,40 @@ for root, _, files in os.walk('.'):
 EOF
 
 # ---------------------------------------------------------------------------
-# Complete Preprocessor Fix for glic_web_client_handler.cc
+#  Fix for glic_web_client_handler.cc
 # ---------------------------------------------------------------------------
-echo "==> Isolating safe browsing in glic_web_client_handler.cc with preprocessor..."
+echo "==> Isolating safe browsing in glic_web_client_handler.cc..."
 python3 - << 'EOF' || true
-import os, subprocess
+import os
 for root, _, files in os.walk('.'):
     if "glic_web_client_handler.cc" in files:
         p = os.path.join(root, "glic_web_client_handler.cc")
         try:
-            # Revert any broken edits so line numbers and braces are factory-clean
-            subprocess.run(["git", "checkout", "--", p], capture_output=True)
             with open(p, "r", encoding="utf-8") as f:
-                lines = f.readlines()
+                c = f.read()
 
-            out = []
-            skipping = False
-            for line in lines:
-                # Line 1190: Start of safe browsing check
-                if "g_browser_process->safe_browsing_service()" in line and not skipping:
-                    out.append("#if 0 // safe_browsing_bypassed\n")
-                    skipping = True
-                
-                # Line 1252: End of the safe browsing ui_manager block
-                if skipping and "if (ui_manager) {" in line:
-                    # Let the block continue until the closing brace of if (ui_manager)
-                    pass
+            # Clean up any broken half-edits from earlier runs
+            c = c.replace("safe_browsing::SafeBrowsingUIManager* ui_manager = nullptr;", "")
+            c = c.replace("if ((true)) { return; }", "")
+            c = c.replace("if (true) { return; }", "")
+            c = c.replace("nullptr;\n", "")
+            c = c.replace("nullptr;", "")
 
-                out.append(line)
-
-                if skipping and line.strip() == "}":
-                    # Close the #if 0 right after the closing brace
-                    out.append("#endif\n")
-                    skipping = False
+            # Provide a safe dummy pointer and wrap the rest in #if 0 ... #endif
+            target = "if (ui_manager) {"
+            if target in c and "#if 0 // glic_safe_browsing_bypassed" not in c:
+                idx = c.find(target)
+                end_idx = c.find("}\n", idx + 50)
+                if end_idx != -1:
+                    replacement = "safe_browsing::SafeBrowsingUIManager* ui_manager = nullptr;\n#if 0 // glic_safe_browsing_bypassed\n" + c[idx:end_idx+2] + "\n#endif\n"
+                    c = c[:idx] + replacement + c[end_idx+2:]
+            elif "safe_browsing::SafeBrowsingUIManager* ui_manager" not in c:
+                # Fallback: ensure ui_manager is at least defined as nullptr
+                c = c.replace("if (ui_manager) {", "safe_browsing::SafeBrowsingUIManager* ui_manager = nullptr;\n    if (false && ui_manager) {")
 
             with open(p, "w", encoding="utf-8") as f:
-                f.writelines(out)
-            print(f"[aerium] Successfully preprocessed {p}")
+                f.write(c)
+            print(f"[aerium] Successfully isolated glic_web_client_handler.cc in {p}")
         except Exception as e:
             print(f"Error patching glic_web_client_handler.cc: {e}")
 EOF
