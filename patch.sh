@@ -336,26 +336,39 @@ for root, _, files in os.walk('.'):
         try:
             with open(p, "r", encoding="utf-8") as f:
                 content = f.read()
-            if "NotificationContentDetectionUkmUtil" in content:
-                # Bypass the ukm logging and auto-revoke block cleanly
-                content = content.replace(
-                    "safe_browsing::NotificationContentDetectionUkmUtil::",
-                    "// safe_browsing::NotificationContentDetectionUkmUtil::"
-                )
-                content = content.replace(
-                    "safe_browsing::kAutoRevokeSuspiciousNotification",
-                    "false && safe_browsing::kAutoRevokeSuspiciousNotification"
-                )
-                content = content.replace(
-                    "safe_browsing::kSuspiciousNotificationShowOriginalKey",
-                    "\"\""
-                )
-                with open(p, "w", encoding="utf-8") as f:
-                    f.write(content)
-                print(f"[aerium] Patched persistent_notification_handler.cc in {p}")
+
+            # Dummy types and constants so safe_browsing looks completely defined
+            dummy_block = """
+namespace safe_browsing {
+  struct NotificationContentDetectionUkmUtil {
+    template <typename... Args>
+    static void RecordSuspiciousNotificationInteractionUkm(Args&&...) {}
+  };
+  inline constexpr bool kAutoRevokeSuspiciousNotification = false;
+  inline constexpr const char* kSuspiciousNotificationShowOriginalKey = "";
+}
+"""
+            if "struct NotificationContentDetectionUkmUtil" not in content:
+                # Insert right after the top includes
+                target = '#include "chrome/browser/notifications/persistent_notification_handler.h"'
+                if target in content:
+                    content = content.replace(target, target + "\n" + dummy_block)
+                else:
+                    content = dummy_block + "\n" + content
+
+            # Restore any mangled strings from previous runs
+            content = content.replace("false && false && ", "")
+            content = content.replace("false && ", "")
+            content = content.replace("// safe_browsing::NotificationContentDetectionUkmUtil::", "safe_browsing::NotificationContentDetectionUkmUtil::")
+
+            with open(p, "w", encoding="utf-8") as f:
+                f.write(content)
+            print(f"[aerium] Successfully declared dummy UKM in {p}")
         except Exception as e:
             print(f"Error patching persistent_notification_handler.cc: {e}")
 EOF
+
+                    
 
 # ---------------------------------------------------------------------------
 # Fix safe_browsing_service in glic_web_client_handler.cc
