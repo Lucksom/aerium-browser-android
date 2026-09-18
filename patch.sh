@@ -181,9 +181,7 @@ if (content::WebContents::HasLiveWebContentsForBrowserContext(profile)) { return
 sed -i 's/|| mSupportedProfileType == SupportedProfileType.REGULAR) {/|| mSupportedProfileType == SupportedProfileType.REGULAR || mSupportedProfileType == SupportedProfileType.MIXED) {/' chrome/android/java/src/org/chromium/chrome/browser/ChromeTabbedActivity.java 2>/dev/null || true
 sed -i 's/|| mSupportedProfileType == SupportedProfileType.OFF_THE_RECORD) {/|| mSupportedProfileType == SupportedProfileType.OFF_THE_RECORD || mSupportedProfileType == SupportedProfileType.MIXED) {/' chrome/android/java/src/org/chromium/chrome/browser/ChromeTabbedActivity.java 2>/dev/null || true
 
-# ---------------------------------------------------------------------------
-# Chromium 150-153+: Disable forced Tab Group auto-creation for Classic Stack
-# ---------------------------------------------------------------------------
+# --- Chromium 150-153+: Disable forced Tab Group auto-creation for Classic Stack
 if [ -d "chrome/android" ] || [ -d "src/chrome/android" ]; then
   echo "==> Hooking TabGroupFeatureUtils to prevent auto-creation crashes..."
   python3 - << 'EOF' || true
@@ -210,23 +208,17 @@ for base in target_dirs:
 EOF
 fi
 
-# ---------------------------------------------------------------------------
-# Fix allow_circular_includes_from in chrome/test/BUILD.gn cleanly
-# ---------------------------------------------------------------------------
+# --- Fix allow_circular_includes_from in chrome/test/BUILD.gn cleanly
 if [ -f "chrome/test/BUILD.gn" ]; then
   echo "==> Fixing allow_circular_includes_from in chrome/test/BUILD.gn..."
   sed -i '1s/^/allow_circular_includes_from = []\n/' chrome/test/BUILD.gn 2>/dev/null || true
 fi
 
-# ---------------------------------------------------------------------------
-# Fix missing RESTART_SNACKBAR_DURATION_MS in AeriumBackupFragment
-# ---------------------------------------------------------------------------
+# --- Fix missing RESTART_SNACKBAR_DURATION_MS in AeriumBackupFragment
 echo "==> Fixing RESTART_SNACKBAR_DURATION_MS in AeriumBackupFragment..."
 find . -name "AeriumBackupFragment.java" -exec sed -i 's/RESTART_SNACKBAR_DURATION_MS/6000/g' {} + 2>/dev/null || true
 
-# ---------------------------------------------------------------------------
-# Apply Vertical Stack Tab Switcher patch safely
-# ---------------------------------------------------------------------------
+# --- Apply Vertical Stack Tab Switcher patch safely
 PATCH_FILE=$(find "$SCRIPT_DIR" "$GITHUB_WORKSPACE" . .. -name "vertical-tab-switcher.patch" 2>/dev/null | head -n 1)
 if [ -n "$PATCH_FILE" ] && [ -f "$PATCH_FILE" ]; then
   echo "==> Found patch file at: $PATCH_FILE"
@@ -235,9 +227,7 @@ if [ -n "$PATCH_FILE" ] && [ -f "$PATCH_FILE" ]; then
   echo "==> Notice: Patch bypassed or already present"
 fi
 
-# ---------------------------------------------------------------------------
-# Completely bypass deep scan WebUIContentInfoSingleton calls in enterprise
-# ---------------------------------------------------------------------------
+# --- Completely bypass deep scan WebUIContentInfoSingleton calls in enterprise
 echo "==> Completely bypassing WebUIContentInfoSingleton deep scan calls..."
 python3 - << 'EOF' || true
 import os
@@ -276,9 +266,7 @@ for root, _, files in os.walk('.'):
                 print(f"Error: {e}")
 EOF
 
-# ---------------------------------------------------------------------------
-# Fix safe_browsing_bridge.cc when safe_browsing_mode=0
-# ---------------------------------------------------------------------------
+# --- Fix safe_browsing_bridge.cc when safe_browsing_mode=0
 echo "==> Neutralizing safe_browsing_service in safe_browsing_bridge.cc..."
 python3 - << 'EOF' || true
 import os
@@ -298,9 +286,7 @@ for root, _, files in os.walk('.'):
             print(f"Error patching safe_browsing_bridge.cc: {e}")
 EOF
 
-# ---------------------------------------------------------------------------
-# Fix incomplete OtpFillingSafeBrowsingCheckerClient in chrome_otp_phish_guard_delegate.cc
-# ---------------------------------------------------------------------------
+# --- Fix incomplete OtpFillingSafeBrowsingCheckerClient in chrome_otp_phish_guard_delegate.cc
 echo "==> Defining OtpFillingSafeBrowsingCheckerClient in chrome_otp_phish_guard_delegate.cc..."
 python3 - << 'EOF' || true
 import os
@@ -320,117 +306,59 @@ for root, _, files in os.walk('.'):
             print(f"Error patching chrome_otp_phish_guard_delegate.cc: {e}")
 EOF
 
-# ---------------------------------------------------------------------------
-# Inox Fix for glic_web_client_handler.cc (Empty ProcessCounterAbuseVerdict)
-# ---------------------------------------------------------------------------
-echo "==> Applying official Inox safe_browsing bypass to glic_web_client_handler.cc..."
-python3 - << 'EOF' || true
-import os, subprocess, re
+# --- Clean Inox bypass for ProcessCounterAbuseVerdict in glic_web_client_handler.cc
+echo "==> Restoring and applying Inox patch to glic_web_client_handler.cc..."
+git checkout -f -- chrome/browser/glic/host/glic_web_client_handler.cc 2>/dev/null || true
+find . -name "glic_web_client_handler.cc" -exec git checkout -f -- {} + 2>/dev/null || true
 
+python3 - << 'EOF' || true
+import os
 for root, _, files in os.walk('.'):
     if "glic_web_client_handler.cc" in files:
         p = os.path.join(root, "glic_web_client_handler.cc")
         try:
-            subprocess.run(["git", "checkout", "--", p], capture_output=True)
             with open(p, "r", encoding="utf-8") as f:
-                content = f.read()
+                c = f.read()
 
-            # Empty out ProcessCounterAbuseVerdict body
-            pattern = r'(void\s+GlicWebClientHandler::ProcessCounterAbuseVerdict\s*\([^)]*\)\s*\{)[\s\S]*?(\n  \})'
-            if re.search(pattern, content):
-                content = re.sub(pattern, r'\1\n    return;\2', content)
-            else:
-                # Direct string replacement fallback
-                marker = "void GlicWebClientHandler::ProcessCounterAbuseVerdict"
-                idx = content.find(marker)
-                if idx != -1:
-                    b_start = content.find("{", idx)
-                    b_end = content.find("\n  }", b_start)
-                    if b_start != -1 and b_end != -1:
-                        content = content[:b_start+1] + "\n    return;" + content[b_end:]
-
-            with open(p, "w", encoding="utf-8") as f:
-                f.write(content)
-            print(f"[aerium] Successfully applied Inox patch to {p}")
+            marker = "void GlicWebClientHandler::ProcessCounterAbuseVerdict("
+            if marker in c:
+                idx = c.find(marker)
+                brace_start = c.find("{", idx)
+                brace_end = c.find("\n  }", brace_start)
+                if brace_start != -1 and brace_end != -1:
+                    c = c[:brace_start+1] + "\n    // Inox: Safe Browsing bypassed\n    return;" + c[brace_end:]
+                    with open(p, "w", encoding="utf-8") as f:
+                        f.write(c)
+                    print(f"[aerium] Cleanly emptied ProcessCounterAbuseVerdict in {p}")
         except Exception as e:
-            print(f"Error patching glic_web_client_handler.cc: {e}")
+            print(f"Error: {e}")
 EOF
 
-    ---------------------------------------------------------------------------
-# Complete Sanitization & Fix for persistent_notification_handler.cc
-# ---------------------------------------------------------------------------
-echo "==> Sanitizing and fixing persistent_notification_handler.cc..."
+# --- Preprocessor isolation for persistent_notification_handler.cc
+echo "==> Isolating persistent_notification_handler.cc..."
 python3 - << 'EOF' || true
-import os, re
+import os
 for root, _, files in os.walk('.'):
     if "persistent_notification_handler.cc" in files:
         p = os.path.join(root, "persistent_notification_handler.cc")
         try:
             with open(p, "r", encoding="utf-8") as f:
                 c = f.read()
-
-            # Clean out any old injected namespace dummy definitions
-            c = re.sub(r'namespace safe_browsing\s*\{[\s\S]*?kSuspiciousNotificationShowOriginalKey\s*=\s*"";\s*\}', '', c)
-
-            # Preprocessor-isolate the suspicious notification detection block so the compiler completely skips it
             if "#if 0 // safe_browsing_bypassed" not in c:
                 target = "safe_browsing::NotificationContentDetectionUkmUtil::"
                 if target in c:
                     idx = c.find(target)
-                    block_start = c.rfind("\n", 0, idx)
-                    block_end = c.find("}\n", idx)
-                    if block_end != -1:
-                        block_end = c.find("}\n", block_end + 2)
-                        if block_end != -1:
-                            c = c[:block_start] + "\n#if 0 // safe_browsing_bypassed\n" + c[block_start:block_end+2] + "\n#endif\n" + c[block_end+2:]
-
-            with open(p, "w", encoding="utf-8") as f:
-                f.write(c)
-            print(f"[aerium] Successfully sanitized {p}")
+                    b_start = c.rfind("\n", 0, idx)
+                    b_end = c.find("}\n", idx)
+                    if b_end != -1:
+                        b_end = c.find("}\n", b_end + 2)
+                        if b_end != -1:
+                            c = c[:b_start] + "\n#if 0 // safe_browsing_bypassed\n" + c[b_start:b_end+2] + "\n#endif\n" + c[b_end+2:]
+                            with open(p, "w", encoding="utf-8") as f:
+                                f.write(c)
+                            print(f"[aerium] Preprocessed {p}")
         except Exception as e:
-            print(f"Error patching persistent_notification_handler.cc: {e}")
-EOF
-
-# ---------------------------------------------------------------------------
-# Global immunity for safe_browsing_service across all browser files
-# ---------------------------------------------------------------------------
-echo "==> Ensuring safe_browsing_service exists in BrowserProcess..."
-python3 - << 'EOF' || true
-import os
-for root, _, files in os.walk('.'):
-    if "browser_process.h" in files:
-        p = os.path.join(root, "browser_process.h")
-        try:
-            with open(p, "r", encoding="utf-8") as f:
-                c = f.read()
-            if "safe_browsing_service()" not in c:
-                marker = "class BrowserProcess {"
-                injection = "class BrowserProcess {\n public:\n  virtual void* safe_browsing_service() { return nullptr; }"
-                c = c.replace(marker, injection, 1)
-                with open(p, "w", encoding="utf-8") as f:
-                    f.write(c)
-                print(f"[aerium] Injected dummy safe_browsing_service in {p}")
-        except Exception as e:
-            print(f"Error patching browser_process.h: {e}")
-
-# Sweep all remaining files in chrome/browser for any dangling safe_browsing_service calls
-for root, _, files in os.walk('chrome/browser'):
-    for f in files:
-        if f.endswith('.cc') and f not in ["glic_web_client_handler.cc", "persistent_notification_handler.cc"]:
-            p = os.path.join(root, f)
-            try:
-                with open(p, 'r', encoding='utf-8', errors='ignore') as fp:
-                    content = fp.read()
-                if "g_browser_process->safe_browsing_service()" in content:
-                    content = content.replace(
-                        "g_browser_process->safe_browsing_service()",
-                        "static_cast<safe_browsing::SafeBrowsingService*>(nullptr)"
-                    )
-                    with open(p, 'w', encoding='utf-8') as fp:
-                        fp.write(content)
-                    print(f"[aerium] Sanitized safe_browsing_service call in {p}")
-            except Exception:
-                pass
+            print(f"Error: {e}")
 EOF
 
 export PATCHED=1
