@@ -321,48 +321,42 @@ for root, _, files in os.walk('.'):
 EOF
 
 # ---------------------------------------------------------------------------
-# Clean restore and header injection for glic_web_client_handler.cc
+# Inox Fix for glic_web_client_handler.cc (Empty ProcessCounterAbuseVerdict)
 # ---------------------------------------------------------------------------
-echo "==> Restoring and safely providing dummy SafeBrowsingService to glic..."
+echo "==> Applying official Inox safe_browsing bypass to glic_web_client_handler.cc..."
 python3 - << 'EOF' || true
-import os, subprocess
+import os, subprocess, re
+
 for root, _, files in os.walk('.'):
     if "glic_web_client_handler.cc" in files:
         p = os.path.join(root, "glic_web_client_handler.cc")
         try:
-            # 1. ALWAYS revert glic_web_client_handler.cc back to clean stock code
             subprocess.run(["git", "checkout", "--", p], capture_output=True)
             with open(p, "r", encoding="utf-8") as f:
-                c = f.read()
+                content = f.read()
 
-            # 2. Inject dummy SafeBrowsingService definition right after includes
-            dummy = """
-namespace safe_browsing {
-class SafeBrowsingUIManager;
-class FakeSafeBrowsingService {
- public:
-  scoped_refptr<SafeBrowsingUIManager> ui_manager() { return nullptr; }
-};
-}
-"""
-            target = '#include "chrome/browser/glic/host/glic_web_client_handler.h"'
-            if target in c and "FakeSafeBrowsingService" not in c:
-                c = c.replace(target, target + "\n" + dummy)
-
-            # 3. Replace only the single method call to return the fake pointer
-            c = c.replace(
-                "g_browser_process->safe_browsing_service()",
-                "reinterpret_cast<safe_browsing::FakeSafeBrowsingService*>(nullptr)"
-            )
+            # Empty out ProcessCounterAbuseVerdict body
+            pattern = r'(void\s+GlicWebClientHandler::ProcessCounterAbuseVerdict\s*\([^)]*\)\s*\{)[\s\S]*?(\n  \})'
+            if re.search(pattern, content):
+                content = re.sub(pattern, r'\1\n    return;\2', content)
+            else:
+                # Direct string replacement fallback
+                marker = "void GlicWebClientHandler::ProcessCounterAbuseVerdict"
+                idx = content.find(marker)
+                if idx != -1:
+                    b_start = content.find("{", idx)
+                    b_end = content.find("\n  }", b_start)
+                    if b_start != -1 and b_end != -1:
+                        content = content[:b_start+1] + "\n    return;" + content[b_end:]
 
             with open(p, "w", encoding="utf-8") as f:
-                f.write(c)
-            print(f"[aerium] Perfectly restored and header-injected {p}")
+                f.write(content)
+            print(f"[aerium] Successfully applied Inox patch to {p}")
         except Exception as e:
-            print(f"Error repairing glic_web_client_handler.cc: {e}")
+            print(f"Error patching glic_web_client_handler.cc: {e}")
 EOF
 
-# ---------------------------------------------------------------------------
+    ---------------------------------------------------------------------------
 # Complete Sanitization & Fix for persistent_notification_handler.cc
 # ---------------------------------------------------------------------------
 echo "==> Sanitizing and fixing persistent_notification_handler.cc..."
