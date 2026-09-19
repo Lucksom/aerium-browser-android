@@ -1,5 +1,8 @@
 #!/bin/bash
 
+# --- Free Root Filesystem Disk Space
+sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android /usr/local/share/boost /usr/local/share/powershell 2>/dev/null || true
+
 # --- WebContents Context Duplicate Cleanup
 sed -i '/CONTENT_EXPORT static bool HasLiveWebContentsForBrowserContext/!b;n;/CONTENT_EXPORT static bool HasLiveWebContentsForBrowserContext/d' content/public/browser/web_contents.h 2>/dev/null || true
 python3 - << 'EOF' || true
@@ -559,21 +562,52 @@ EOF
 
 find . -path "*/obj/chrome/browser/glic/impl/glic_web_client_handler.o" -delete 2>/dev/null || true
 
-# --- Early Compilation Diagnostic for glic_web_client_handler
+# --- aerium_extensions WebUI Header Decoupling & Diagnostics
+echo "=== EXTENSIONS DIAGNOSTICS ==="
+grep -n "aerium_extensions\|AeriumExtensions" chrome/browser/ui/webui/chrome_web_ui_configs.cc 2>/dev/null || true
+find . -name "aerium_extensions.*" -exec sh -c 'echo "== $1"; sed -n 1,50p "$1"' _ {} \; 2>/dev/null || true
+grep -i extensions out/Default/args.gn 2>/dev/null || true
+echo "=============================="
+
+echo "==> Decoupling aerium_extensions.h from extension_install_prompt.h..."
+python3 - << 'EOF' || true
+import os
+for root, _, files in os.walk('.'):
+    if "aerium_extensions.h" in files:
+        p = os.path.join(root, "aerium_extensions.h")
+        try:
+            with open(p, "r", encoding="utf-8") as f:
+                c = f.read()
+            target = '#include "chrome/browser/extensions/extension_install_prompt.h"'
+            if target in c:
+                c = c.replace(target, 'class ExtensionInstallPrompt;')
+                with open(p, "w", encoding="utf-8") as f:
+                    f.write(c)
+                print(f"[aerium] Successfully decoupled {p}")
+        except Exception as e:
+            print(f"Error: {e}")
+EOF
+
+# Delete stale object file for chrome_web_ui_configs.o
+find . -path "*/obj/chrome/browser/ui/webui/configs/chrome_web_ui_configs.o" -delete 2>/dev/null || true
+
+# --- Early Compilation Diagnostic for BOTH WebUI Configs and GLIC Handler
 for outdir in "out/Default" "chromium/src/out/Default"; do
   if [ -f "$outdir/build.ninja" ]; then
-    echo "==> Running early compilation diagnostic for glic_web_client_handler.o in $outdir..."
+    echo "==> Running early compilation diagnostic for chrome_web_ui_configs.o and glic_web_client_handler.o in $outdir..."
     export PATH="$PATH:$GITHUB_WORKSPACE/chromium/depot_tools:$GITHUB_WORKSPACE/depot_tools"
     AUTONINJA_BIN=$(which autoninja 2>/dev/null || find . -name "autoninja" | head -n 1)
     if [ -n "$AUTONINJA_BIN" ]; then
-      bash "$AUTONINJA_BIN" -C "$outdir" obj/chrome/browser/glic/impl/glic_web_client_handler.o || {
+      bash "$AUTONINJA_BIN" -C "$outdir" \
+        obj/chrome/browser/ui/webui/configs/chrome_web_ui_configs.o \
+        obj/chrome/browser/glic/impl/glic_web_client_handler.o || {
         echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
-        echo "[aerium] Diagnostic failed: glic_web_client_handler.o failed to compile."
+        echo "[aerium] Diagnostic failed: one or more targets failed to compile."
         echo "Aborting early to prevent waiting through the full build queue."
         echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
         exit 1
       }
-      echo "==> [SUCCESS] glic_web_client_handler.o compiled successfully!"
+      echo "==> [SUCCESS] Both chrome_web_ui_configs.o and glic_web_client_handler.o compiled successfully!"
     fi
     break
   fi
