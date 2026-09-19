@@ -326,6 +326,8 @@ fi
   # 1. Restore the file from local git checkout if git repository is valid
   if [ -d .git ] && git checkout -f HEAD -- "$REL_F" 2>/dev/null; then
     echo "[aerium] Restored $REL_F via git checkout"
+  elif [ -d "../.git" ] && git -C .. checkout -f HEAD -- "$REL_F" 2>/dev/null; then
+    echo "[aerium] Restored $REL_F via parent git checkout"
   else
     # 2. No usable git: read exact Chromium version from chrome/VERSION
     if [ ! -f "chrome/VERSION" ]; then
@@ -343,27 +345,29 @@ fi
       rm -f "$REL_F.b64"
       echo "[aerium] Successfully restored $REL_F at tag $TAG"
     else
-      echo "[aerium] Error: Tag fetch failed or output was empty for $TAG"
+      echo "[aerium] Warning: Tag fetch failed for $TAG, attempting in-place class fix..."
       rm -f "$REL_F.b64" "$REL_F.new"
-      exit 1
     fi
   fi
 
- # 3. Apply Inox bypass cleanly
+  # 3. Apply structural repair & Inox bypass cleanly
   python3 - << 'EOF'
-import re
+import os
 
 REL_F = "chrome/browser/glic/host/glic_web_client_handler.cc"
 with open(REL_F, "r", encoding="utf-8") as fp:
     c = fp.read()
 
-# Pattern 1: Any ProcessCounterAbuseVerdict method definition
+# Fix accidental class rename if present
+c = c.replace("GlicWebClientHandler::GlicWebClientHandler(", "WebClientHandler::WebClientHandler(")
+c = c.replace("&GlicWebClientHandler::OnDisconnected", "&WebClientHandler::OnDisconnected")
+c = c.replace("GlicWebClientHandler::OnDisconnected", "WebClientHandler::OnDisconnected")
+c = c.replace("class GlicWebClientHandler : public mojom::WebClientHandler", "class WebClientHandler : public mojom::WebClientHandler")
+
+# Pattern 1: Empty out ProcessCounterAbuseVerdict body
 if "ProcessCounterAbuseVerdict(" in c:
-    # Match the function header and opening brace
     idx = c.find("ProcessCounterAbuseVerdict(")
-    # Find the opening brace of the function body
     s = c.find("{", idx)
-    # Find matching closing brace at column 0 or closing indentation
     e = c.find("\n}\n", s)
     if e == -1:
         e = c.find("\n  }", s)
@@ -372,20 +376,36 @@ if "ProcessCounterAbuseVerdict(" in c:
         print("[aerium] Emptied ProcessCounterAbuseVerdict body")
 
 # Pattern 2: Neutralize any direct safe_browsing_service calls in the file
-c = c.replace(
-    "g_browser_process->safe_browsing_service()",
-    "nullptr"
-)
+c = c.replace("g_browser_process->safe_browsing_service()", "nullptr")
 
 with open(REL_F, "w", encoding="utf-8") as fp:
     fp.write(c)
 
-print("[aerium] Successfully applied Inox bypass to", REL_F)
+print("[aerium] Successfully processed", REL_F)
 EOF
 
-  # 4. Fast targeted cleanup of stale intermediate object files in out directories
+  # 4. Diagnostic dump: inspect exact state of file on runner
+  echo "--- ctor context (lines 340-375) ---"
+  sed -n '340,375p' "$REL_F" 2>/dev/null || true
+  echo "--- bypass applied? ---"
+  grep -c "Inox: Safe Browsing" "$REL_F" 2>/dev/null || true
+  echo "--- header members ---"
+  grep -n "profile_" "${REL_F%.cc}.h" 2>/dev/null | head -n 3 || true
+
+  # 5. Fast targeted cleanup of stale intermediate object file
   find out -path "*/obj/chrome/browser/glic/impl/glic_web_client_handler.o" -delete 2>/dev/null || true
-) 
+
+  # 6. Fast early compilation check: compile ONLY this single object file now!
+  if [ -f "out/Default/build.ninja" ]; then
+    echo "==> Testing single compilation of glic_web_client_handler.o..."
+    autoninja -C out/Default obj/chrome/browser/glic/impl/glic_web_client_handler.o || {
+      echo "[aerium] Fast compilation failed! Aborting before wasting runner time."
+      exit 1
+    }
+    echo "==> [SUCCESS] glic_web_client_handler.o compiled cleanly!"
+  fi
+
+) || { echo "[aerium] Inox step failed, aborting"; exit 1; }
 
 # --- Preprocessor isolation for persistent_notification_handler.cc
 echo "==> Isolating persistent_notification_handler.cc..."
