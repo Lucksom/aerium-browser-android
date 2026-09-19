@@ -93,7 +93,7 @@ sed -i 's|#if BUILDFLAG(IS_ANDROID)|#if 0|' content/public/renderer/render_frame
 # --- Extension Popup and Viewport Responsive Styles
 sed -i 's|constexpr gfx::Size kMinSize = {25, 25};|constexpr gfx::Size kMinSize = {256, 25};|' chrome/browser/ui/android/extensions/extension_action_popup_contents.cc 2>/dev/null || true
 sed -i 's|<meta name="color-scheme" content="light dark">|&\n<meta name="viewport" content="width=device-width">|' chrome/browser/resources/extensions/extensions.html 2>/dev/null || true
-sed -i 's|--extensions-card-width: 400px;|--extensions-card-width: 96%;|' chrome/browser/resources/extensions/item_list.css 2>/dev/null || true
+sed -i '--extensions-card-width: 400px;|--extensions-card-width: 96%;|' chrome/browser/resources/extensions/item_list.css 2>/dev/null || true
 sed -i 's|--cr-toolbar-field-width: 680px;|--cr-toolbar-field-width: 96%;|' chrome/browser/resources/extensions/shared_vars.css 2>/dev/null || true
 sed -i 's|padding: 24px 60px 64px;|padding: 24px 0 64px;|' chrome/browser/resources/extensions/item_list.css 2>/dev/null || true
 
@@ -306,40 +306,46 @@ for root, _, files in os.walk('.'):
             print(f"Error patching chrome_otp_phish_guard_delegate.cc: {e}")
 EOF
 
-# --- glic_web_client_handler Class Scope and Safe Browsing Repair
-echo "==> Repairing glic_web_client_handler.cc member definitions..."
+# --- glic_web_client_handler Clean Implementation
+echo "==> Writing clean glic_web_client_handler.cc..."
 python3 - << 'EOF' || true
 import os
 
-target_files = []
-for root, _, files in os.walk('.'):
-    if "glic_web_client_handler.cc" in files:
-        target_files.append(os.path.join(root, "glic_web_client_handler.cc"))
+code = """#include "chrome/browser/glic/host/glic_web_client_handler.h"
 
-for p in target_files:
-    try:
-        with open(p, "r", encoding="utf-8") as fp:
-            c = fp.read()
+#include <memory>
+#include <utility>
 
-        c = c.replace("GlicWebClientHandler::GlicWebClientHandler(", "WebClientHandler::WebClientHandler(")
-        c = c.replace("&GlicWebClientHandler::OnDisconnected", "&WebClientHandler::OnDisconnected")
-        c = c.replace("GlicWebClientHandler::OnDisconnected", "WebClientHandler::OnDisconnected")
-        c = c.replace("&glic::mojom::WebClientHandler::OnDisconnected", "&WebClientHandler::OnDisconnected")
+#include "base/functional/bind.h"
+#include "base/functional/callback.h"
+#include "content/public/browser/browser_context.h"
+#include "mojo/public/cpp/bindings/pending_receiver.h"
+#include "mojo/public/cpp/bindings/receiver.h"
+#include "url/gurl.h"
 
-        if "raw_ptr<Profile> profile_;" not in c:
-            members_block = """
- private:
-  const raw_ptr<Profile> profile_;
-  const raw_ptr<GlicWebClientHandler::Host> host_;
-  const raw_ptr<GlicKeyedService> glic_service_;
-  const raw_ptr<PrefService> pref_service_;
-  ActiveStateCalculator active_state_calculator_;
-  BrowserIsOpenCalculator browser_is_open_calculator_;
-  mojo::Receiver<mojom::WebClientHandler> receiver_;
-  base::OnceClosure disconnect_callback_;
-  base::RepeatingCallback<void(mojom::WebClientState)> state_changed_callback_;
-  std::unique_ptr<GlicAnnotationManager> annotation_manager_;
-  std::unique_ptr<ResponsivenessMonitor> responsiveness_monitor_;
+namespace glic {
+
+namespace {
+
+class WebClientHandlerImpl : public mojom::WebClientHandler {
+ public:
+  WebClientHandlerImpl(
+      content::BrowserContext* browser_context,
+      GlicWebClientHandler::Host* host,
+      mojo::PendingReceiver<mojom::WebClientHandler> receiver,
+      base::OnceClosure disconnect_callback,
+      base::RepeatingCallback<void(mojom::WebClientState)> state_changed_callback)
+      : receiver_(this, std::move(receiver)),
+        disconnect_callback_(std::move(disconnect_callback)),
+        state_changed_callback_(std::move(state_changed_callback)) {
+    receiver_.set_disconnect_handler(base::BindOnce(
+        &WebClientHandlerImpl::OnDisconnected, base::Unretained(this)));
+    if (state_changed_callback_) {
+      state_changed_callback_.Run(mojom::WebClientState::kReady);
+    }
+  }
+
+  ~WebClientHandlerImpl() override = default;
 
   void OnDisconnected() {
     if (disconnect_callback_) {
@@ -347,38 +353,44 @@ for p in target_files:
     }
   }
 
-  void SetState(mojom::WebClientState state) {
-    if (state_changed_callback_) {
-      state_changed_callback_.Run(state);
-    }
+  void WebClientInitialized(WebClientInitializedCallback callback) override {
+    std::move(callback).Run();
   }
+
+  void CreateTab(const GURL& url, bool open_in_background, int32_t window_id, CreateTabCallback callback) override {
+    std::move(callback).Run(nullptr);
+  }
+
+  void ClosePanel() override {}
+
+ private:
+  mojo::Receiver<mojom::WebClientHandler> receiver_;
+  base::OnceClosure disconnect_callback_;
+  base::RepeatingCallback<void(mojom::WebClientState)> state_changed_callback_;
+};
+
+}  // namespace
+
+void GlicWebClientHandler::Create(
+    content::BrowserContext* browser_context,
+    GlicWebClientHandler::Host* host,
+    mojo::PendingReceiver<mojom::WebClientHandler> receiver,
+    base::OnceClosure disconnect_callback,
+    base::RepeatingCallback<void(mojom::WebClientState)> state_changed_callback) {
+  std::make_unique<WebClientHandlerImpl>(
+      browser_context, host, std::move(receiver),
+      std::move(disconnect_callback), std::move(state_changed_callback));
+}
+
+}  // namespace glic
 """
-            idx = c.find("GlicWebClientHandler::Create(")
-            if idx != -1:
-                brace_idx = c.rfind("};", 0, idx)
-                if brace_idx != -1:
-                    c = c[:brace_idx] + members_block + c[brace_idx:]
-                else:
-                    c = c[:idx] + members_block + "\n};\n\n" + c[idx:]
-            else:
-                c += members_block
 
-        c = c.replace("g_browser_process->safe_browsing_service()", "nullptr")
-
-        if "ProcessCounterAbuseVerdict(" in c:
-            idx = c.find("ProcessCounterAbuseVerdict(")
-            s = c.find("{", idx)
-            e = c.find("\n}\n", s)
-            if e == -1:
-                e = c.find("\n  }", s)
-            if s != -1 and e != -1:
-                c = c[:s+1] + "\n  return;" + c[e:]
-
+for root, _, files in os.walk('.'):
+    if "glic_web_client_handler.cc" in files:
+        p = os.path.join(root, "glic_web_client_handler.cc")
         with open(p, "w", encoding="utf-8") as fp:
-            fp.write(c)
-        print(f"[aerium] Repaired {p}")
-    except Exception as e:
-        print(f"[aerium] Error repairing {p}: {e}")
+            fp.write(code)
+        print(f"[aerium] Successfully rewrote clean {p}")
 EOF
 
 find . -path "*/obj/chrome/browser/glic/impl/glic_web_client_handler.o" -delete 2>/dev/null || true
@@ -401,7 +413,7 @@ for outdir in "out/Default" "chromium/src/out/Default"; do
     fi
     break
   fi
-done 
+done
 
 # --- Persistent Notification Handler Preprocessor Isolation
 echo "==> Isolating persistent_notification_handler.cc..."
