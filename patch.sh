@@ -306,38 +306,38 @@ for root, _, files in os.walk('.'):
             print(f"Error patching chrome_otp_phish_guard_delegate.cc: {e}")
 EOF
 
-# --- Inox bypass for glic_web_client_handler.cc (pure resilient in-place patching)
-echo "==> Processing glic_web_client_handler.cc..."
+# --- Clean restore and safe browsing bypass for glic_web_client_handler.cc
+echo "==> Restoring and patching glic_web_client_handler.cc..."
 python3 - << 'EOF' || true
-import os
+import os, subprocess
 
-target_files = []
-for root, _, files in os.walk('.'):
+# 1. Search for glic_web_client_handler.cc across the workspace
+for root, dirs, files in os.walk('.'):
     if "glic_web_client_handler.cc" in files:
-        target_files.append(os.path.join(root, "glic_web_client_handler.cc"))
+        full_path = os.path.join(root, "glic_web_client_handler.cc")
+        print("[aerium] Found:", full_path)
 
-for p in target_files:
-    try:
-        with open(p, "r", encoding="utf-8") as fp:
-            c = fp.read()
+        # Find git root containing this file
+        cur = os.path.abspath(root)
+        git_root = None
+        while cur != "/" and cur != "":
+            if os.path.isdir(os.path.join(cur, ".git")):
+                git_root = cur
+                break
+            cur = os.path.dirname(cur)
 
-        # 1. Fix inner class scope: WebClientHandler owns profile_, host_, OnDisconnected, SetState
-        c = c.replace("GlicWebClientHandler::GlicWebClientHandler(", "WebClientHandler::WebClientHandler(")
-        c = c.replace("&GlicWebClientHandler::OnDisconnected", "&WebClientHandler::OnDisconnected")
-        c = c.replace("GlicWebClientHandler::OnDisconnected", "WebClientHandler::OnDisconnected")
-        c = c.replace("class GlicWebClientHandler : public mojom::WebClientHandler", "class WebClientHandler : public mojom::WebClientHandler")
+        if git_root:
+            print("[aerium] Restoring via git at:", git_root)
+            rel_file = os.path.relpath(os.path.abspath(full_path), git_root)
+            subprocess.run(["git", "-C", git_root, "checkout", "-f", "HEAD", "--", rel_file], check=False)
 
-        # 2. Fix lines 294 and 336 if damaged
-        if "raw_ptr<Observer> observer_ =   int open_browser_count_ = 0;" in c:
-            c = c.replace("raw_ptr<Observer> observer_ =   int open_browser_count_ = 0;", "raw_ptr<Observer> observer_ = nullptr;\n  int open_browser_count_ = 0;")
-        if "raw_ptr<Observer> observer_ = int open_browser_count_ = 0;" in c:
-            c = c.replace("raw_ptr<Observer> observer_ = int open_browser_count_ = 0;", "raw_ptr<Observer> observer_ = nullptr;\n  int open_browser_count_ = 0;")
-        if "next_data_candidate_ =     remaining_debounces_ = max_debounces_;" in c:
-            c = c.replace("next_data_candidate_ =     remaining_debounces_ = max_debounces_;", "next_data_candidate_ = nullptr;\n    remaining_debounces_ = max_debounces_;")
-        if "next_data_candidate_ = remaining_debounces_ = max_debounces_;" in c:
-            c = c.replace("next_data_candidate_ = remaining_debounces_ = max_debounces_;", "next_data_candidate_ = nullptr;\n    remaining_debounces_ = max_debounces_;")
+        # 2. Read the file
+        with open(full_path, "r", encoding="utf-8") as f:
+            c = f.read()
 
-        # 3. Empty out ProcessCounterAbuseVerdict body cleanly
+        # 3. Only apply safe browsing bypasses (leaving classes, members, and braces untouched!)
+        c = c.replace("g_browser_process->safe_browsing_service()", "nullptr")
+
         if "ProcessCounterAbuseVerdict(" in c:
             idx = c.find("ProcessCounterAbuseVerdict(")
             s = c.find("{", idx)
@@ -345,20 +345,15 @@ for p in target_files:
             if e == -1:
                 e = c.find("\n  }", s)
             if s != -1 and e != -1:
-                c = c[:s+1] + "\n  // Inox: Safe Browsing bypassed\n  return;" + c[e:]
-                print(f"[aerium] Emptied ProcessCounterAbuseVerdict in {p}")
+                c = c[:s+1] + "\n  return;" + c[e:]
+                print("[aerium] Neutralized ProcessCounterAbuseVerdict")
 
-        # 4. Neutralize any direct safe_browsing_service calls in the file
-        c = c.replace("g_browser_process->safe_browsing_service()", "nullptr")
-
-        with open(p, "w", encoding="utf-8") as fp:
-            fp.write(c)
-        print(f"[aerium] Successfully prepared {p}")
-    except Exception as e:
-        print(f"[aerium] Error processing {p}: {e}")
+        with open(full_path, "w", encoding="utf-8") as f:
+            f.write(c)
+        print("[aerium] Successfully prepared", full_path)
 EOF
 
-# Delete stale object files so Siso recompiles with fresh changes
+# Delete stale intermediate object file
 find . -path "*/obj/chrome/browser/glic/impl/glic_web_client_handler.o" -delete 2>/dev/null || true
 
 # --- Preprocessor isolation for persistent_notification_handler.cc
