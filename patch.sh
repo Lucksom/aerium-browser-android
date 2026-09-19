@@ -313,12 +313,16 @@ import os
 code = """#include "chrome/browser/glic/host/glic_web_client_handler.h"
 
 #include <memory>
+#include <optional>
+#include <string>
 #include <utility>
+#include <vector>
 
 #include "base/functional/bind.h"
 #include "base/functional/callback.h"
 #include "content/public/browser/browser_context.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
+#include "mojo/public/cpp/bindings/pending_remote.h"
 #include "mojo/public/cpp/bindings/receiver.h"
 #include "url/gurl.h"
 
@@ -350,7 +354,25 @@ class WebClientHandlerImpl : public mojom::WebClientHandler,
     }
   }
 
+  // ---- mojom::WebClientHandler ----
+  void WebClientCreated(::mojo::PendingRemote<mojom::WebClient> web_client,
+                        WebClientCreatedCallback callback) override {}
   void WebClientInitialized() override {}
+  void WebClientInitializeFailed() override {}
+  void CreateActorHandler(
+      ::mojo::PendingReceiver<mojom::ActorHandler> receiver,
+      ::mojo::PendingRemote<mojom::ActorClient> client) override {}
+  void CreateExperimentalTriggeringClient(
+      ::mojo::PendingRemote<mojom::ExperimentalTriggeringClient> client)
+      override {}
+  void CreateAnnotationHandler(
+      ::mojo::PendingReceiver<mojom::AnnotationHandler> receiver) override {}
+  void CreateSkillsHandler(
+      ::mojo::PendingReceiver<mojom::SkillsHandler> receiver,
+      ::mojo::PendingRemote<mojom::SkillsClient> client) override {}
+  void CreateZeroStateSuggestionsHandler(
+      ::mojo::PendingReceiver<mojom::ZeroStateSuggestionsHandler> receiver)
+      override {}
 
   void CreateTab(const ::GURL& url,
                  mojom::CreateTabOptionsPtr create_options,
@@ -360,10 +382,155 @@ class WebClientHandlerImpl : public mojom::WebClientHandler,
 
   void ClosePanel() override {}
 
+  void ActivateTabWithUrl(const ::GURL& exact_url,
+                          mojom::ActivateTabOptionsPtr options,
+                          ActivateTabWithUrlCallback callback) override {}
+  void OpenLinkInPopup(const ::GURL& url,
+                       int32_t popup_width,
+                       int32_t popup_height) override {}
+  void OpenGlicSettingsPage(mojom::OpenSettingsOptionsPtr options) override {}
+  void OpenPasswordManagerSettingsPage() override {}
+  void ClosePanelAndShutdown() override {}
+  void AttachPanel() override {}
+  void DetachPanel() override {}
+  void OnModeChange(mojom::WebClientMode new_mode) override {}
+  void OnMicrophoneStatusChange(mojom::MicrophoneStatus status) override {}
+  void ShowProfilePicker() override {}
+  void GetModelQualityClientId(
+      GetModelQualityClientIdCallback callback) override {}
+  void GetContextFromFocusedTab(
+      mojom::TabContextOptionsPtr options,
+      GetContextFromFocusedTabCallback callback) override {}
+  void GetContextFromTab(int32_t tab_id,
+                         mojom::TabContextOptionsPtr options,
+                         GetContextFromTabCallback callback) override {}
+  void GetImageBytesFromTab(int32_t tab_id,
+                            const std::string& document_id,
+                            int32_t dom_node_id,
+                            GetImageBytesFromTabCallback callback) override {}
+  void SetMaximumNumberOfPinnedTabs(
+      uint32_t requested_max,
+      SetMaximumNumberOfPinnedTabsCallback callback) override {}
+  void PinTabs(const std::vector<int32_t>& tab_ids,
+               mojom::PinTabsOptionsPtr options,
+               PinTabsCallback callback) override {}
+  void UnpinTabs(const std::vector<int32_t>& tab_ids,
+                 mojom::UnpinTabsOptionsPtr options,
+                 UnpinTabsCallback callback) override {}
+  void UnpinAllTabs(mojom::UnpinTabsOptionsPtr options) override {}
+  void SubscribeToPinCandidates(
+      mojom::GetPinCandidatesOptionsPtr options,
+      ::mojo::PendingRemote<mojom::PinCandidatesObserver> observer) override {}
+  void ActivateTab(int32_t task_id) override {}
+  void ResizeWidget(const ::gfx::Size& size,
+                    ::base::TimeDelta duration,
+                    ResizeWidgetCallback callback) override {}
+  void CaptureScreenshot(CaptureScreenshotCallback callback) override {}
+  void CaptureRegion(::mojo::PendingRemote<mojom::CaptureRegionObserver> observer,
+                     mojom::CaptureRegionParamsPtr params) override {}
+  void DeleteCapturedRegion(int32_t tab_id,
+                            const ::base::UnguessableToken& id) override {}
+  void SetAudioDucking(bool enable, SetAudioDuckingCallback callback) override {}
+  void SetMinimumPanelSize(const ::gfx::Size& size) override {}
+  void SetMicrophonePermissionState(
+      bool enabled,
+      SetMicrophonePermissionStateCallback callback) override {}
+  void SetLocationPermissionState(
+      bool enabled,
+      SetLocationPermissionStateCallback callback) override {}
+  void SetTabContextPermissionState(
+      bool enabled,
+      SetTabContextPermissionStateCallback callback) override {}
+  void SetClosedCaptioningSetting(
+      bool enabled,
+      SetClosedCaptioningSettingCallback callback) override {}
+  void SetActuationOnWebSetting(
+      bool enabled,
+      SetActuationOnWebSettingCallback callback) override {}
+  void ShouldAllowMediaPermissionRequest(
+      ShouldAllowMediaPermissionRequestCallback callback) override {}
+  void ShouldAllowGeolocationPermissionRequest(
+      ShouldAllowGeolocationPermissionRequestCallback callback) override {}
+  void SetContextAccessIndicator(bool enabled) override {}
+  void GetUserProfileInfo(GetUserProfileInfoCallback callback) override {}
+  void SyncCookies(SyncCookiesCallback callback) override {}
+  void ClientErrorDialogStateChanged(
+      std::optional<mojom::ClientErrorDialogType> shown_dialog_type) override {}
+  void ReportClientTransientError(
+      ::mojo_base::mojom::AbslStatusCode status_code) override {}
+  void ProcessCounterAbuseVerdict(
+      int32_t tab_id,
+      mojom::CounterAbuseVerdictPtr verdict) override {}
+  void OnOptinImpression() override {}
+  void OnUserInputSubmitted(mojom::WebClientMode mode) override {}
+  void OnContextUploadStarted() override {}
+  void OnContextUploadCompleted() override {}
+  void OnReaction(mojom::MetricUserInputReactionType reactionType) override {}
+  void OnResponseStarted() override {}
+  void OnResponseStopped(mojom::OnResponseStoppedDetailsPtr details) override {}
+  void OnSessionTerminated() override {}
+  void OnTurnCompleted(mojom::WebClientModel model,
+                       ::base::TimeDelta duration) override {}
+  void OnResponseRated(bool positive) override {}
+  void OnClosedCaptionsShown() override {}
+  void OnActionSubmitted(bool is_retry) override {}
+  void SetSyntheticExperimentState(const std::string& trial_name,
+                                   const std::string& group_name) override {}
+  void OpenOsPermissionSettingsMenu(
+      ::content_settings::mojom::ContentSettingsType type) override {}
+  void GetOsMicrophonePermissionStatus(
+      GetOsMicrophonePermissionStatusCallback callback) override {}
+  void GetZeroStateSuggestionsForFocusedTab(
+      std::optional<bool> is_first_run,
+      GetZeroStateSuggestionsForFocusedTabCallback callback) override {}
+  void MaybeRefreshUserStatus() override {}
+  void IsDebuggerAttached(IsDebuggerAttachedCallback callback) override {}
+  void SubscribeToPageMetadata(
+      int32_t tab_id,
+      const std::vector<std::string>& names,
+      SubscribeToPageMetadataCallback callback) override {}
+  void SwitchConversation(mojom::ConversationInfoPtr info,
+                          SwitchConversationCallback callback) override {}
+  void RegisterConversation(mojom::ConversationInfoPtr info,
+                            RegisterConversationCallback callback) override {}
+  void SetOnboardingCompleted() override {}
+  void SubscribeToTabData(
+      int32_t tab_id,
+      ::mojo::PendingRemote<mojom::TabDataHandler> receiver) override {}
+  void SubscribeToTabFavicon(
+      int32_t tab_id,
+      ::mojo::PendingRemote<mojom::TabFaviconHandler> receiver) override {}
+
+  // ---- GlicWebClientAccess ----
+  mojom::WebClient* web_client() override { return nullptr; }
+  mojom::WebClientState web_client_state() const override {
+    return web_client_state_;
+  }
+  void PanelWillOpen(mojom::PanelOpeningDataPtr panel_opening_data,
+                     PanelWillOpenCallback done) override {}
+  void PanelWasClosed(base::OnceClosure done) override {
+    std::move(done).Run();
+  }
+  void StopMicrophone(base::OnceClosure done) override {
+    std::move(done).Run();
+  }
+  void PanelStateChanged(const glic::mojom::PanelState& panel_state) override {}
+  void NotifyInstanceActivationChanged(bool is_active) override {}
+  void ManualResizeChanged(bool resizing) override {}
+  void NotifyAdditionalContext(mojom::AdditionalContextPtr context) override {}
+  void FloatingPanelCanAttachChanged(bool can_attach) override {}
+  void NotifyActorTaskListRowClicked(int32_t task_id) override {}
+  void Invoke(mojom::InvokeOptionsPtr options,
+              base::OnceClosure callback) override {
+    std::move(callback).Run();
+  }
+  void OnUserInputSubmittedForTesting(mojom::WebClientMode mode) override {}
+
  private:
   mojo::Receiver<mojom::WebClientHandler> receiver_;
   base::OnceClosure disconnect_callback_;
   WebClientStateChangedCallback state_changed_callback_;
+  mojom::WebClientState web_client_state_ = mojom::WebClientState{};
 };
 
 }  // namespace
@@ -387,20 +554,10 @@ for root, _, files in os.walk('.'):
         p = os.path.join(root, "glic_web_client_handler.cc")
         with open(p, "w", encoding="utf-8") as fp:
             fp.write(code)
-        print(f"[aerium] Successfully rewrote {p}")
+        print(f"[aerium] Successfully rewrote clean {p}")
 EOF
 
 find . -path "*/obj/chrome/browser/glic/impl/glic_web_client_handler.o" -delete 2>/dev/null || true
-
-# --- Dump GLIC Interface Definitions for Exact Stubbing
-echo "=== GLIC MOJOM DUMP ==="
-MOJOM_H=$(find . out/Default/gen -name "glic.mojom.h" -path "*glic/host*" 2>/dev/null | head -n 1)
-if [ -n "$MOJOM_H" ] && [ -f "$MOJOM_H" ]; then
-  awk '/^class WebClientHandler /,/^};/' "$MOJOM_H" | grep -E "virtual.*= 0;" || true
-fi
-echo "=== GLIC ACCESS DUMP ==="
-cat chrome/browser/glic/host/glic_web_client_access.h 2>/dev/null || cat chromium/src/chrome/browser/glic/host/glic_web_client_access.h 2>/dev/null || find . -name "glic_web_client_access.h" -exec cat {} + 2>/dev/null || true
-echo "========================"
 
 # --- Early Compilation Diagnostic for glic_web_client_handler
 for outdir in "out/Default" "chromium/src/out/Default"; do
