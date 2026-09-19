@@ -93,7 +93,7 @@ sed -i 's|#if BUILDFLAG(IS_ANDROID)|#if 0|' content/public/renderer/render_frame
 # --- Extension Popup and Viewport Responsive Styles
 sed -i 's|constexpr gfx::Size kMinSize = {25, 25};|constexpr gfx::Size kMinSize = {256, 25};|' chrome/browser/ui/android/extensions/extension_action_popup_contents.cc 2>/dev/null || true
 sed -i 's|<meta name="color-scheme" content="light dark">|&\n<meta name="viewport" content="width=device-width">|' chrome/browser/resources/extensions/extensions.html 2>/dev/null || true
-sed -i '--extensions-card-width: 400px;|--extensions-card-width: 96%;|' chrome/browser/resources/extensions/item_list.css 2>/dev/null || true
+sed -i 's|--extensions-card-width: 400px;|--extensions-card-width: 96%;|' chrome/browser/resources/extensions/item_list.css 2>/dev/null || true
 sed -i 's|--cr-toolbar-field-width: 680px;|--cr-toolbar-field-width: 96%;|' chrome/browser/resources/extensions/shared_vars.css 2>/dev/null || true
 sed -i 's|padding: 24px 60px 64px;|padding: 24px 0 64px;|' chrome/browser/resources/extensions/item_list.css 2>/dev/null || true
 
@@ -307,7 +307,10 @@ for root, _, files in os.walk('.'):
 EOF
 
 # --- glic_web_client_handler Clean Implementation
-echo "==> Writing clean glic_web_client_handler.cc..."
+echo "=== GLIC HEADER DUMP ==="
+cat chrome/browser/glic/host/glic_web_client_handler.h 2>/dev/null || cat chromium/src/chrome/browser/glic/host/glic_web_client_handler.h 2>/dev/null || find . -name "glic_web_client_handler.h" -exec cat {} + 2>/dev/null || true
+echo "========================"
+
 python3 - << 'EOF' || true
 import os
 
@@ -331,7 +334,7 @@ class WebClientHandlerImpl : public mojom::WebClientHandler {
  public:
   WebClientHandlerImpl(
       content::BrowserContext* browser_context,
-      GlicWebClientHandler::Host* host,
+      Host* host,
       mojo::PendingReceiver<mojom::WebClientHandler> receiver,
       base::OnceClosure disconnect_callback,
       base::RepeatingCallback<void(mojom::WebClientState)> state_changed_callback)
@@ -340,9 +343,6 @@ class WebClientHandlerImpl : public mojom::WebClientHandler {
         state_changed_callback_(std::move(state_changed_callback)) {
     receiver_.set_disconnect_handler(base::BindOnce(
         &WebClientHandlerImpl::OnDisconnected, base::Unretained(this)));
-    if (state_changed_callback_) {
-      state_changed_callback_.Run(mojom::WebClientState::kReady);
-    }
   }
 
   ~WebClientHandlerImpl() override = default;
@@ -353,11 +353,13 @@ class WebClientHandlerImpl : public mojom::WebClientHandler {
     }
   }
 
-  void WebClientInitialized(WebClientInitializedCallback callback) override {
-    std::move(callback).Run();
+  void WebClientInitialized(base::OnceClosure callback) {
+    if (callback) {
+      std::move(callback).Run();
+    }
   }
 
-  void CreateTab(const GURL& url, bool open_in_background, int32_t window_id, CreateTabCallback callback) override {
+  void CreateTab(const ::GURL& url, mojom::CreateTabOptionsPtr create_options, CreateTabCallback callback) override {
     std::move(callback).Run(nullptr);
   }
 
@@ -371,17 +373,6 @@ class WebClientHandlerImpl : public mojom::WebClientHandler {
 
 }  // namespace
 
-void GlicWebClientHandler::Create(
-    content::BrowserContext* browser_context,
-    GlicWebClientHandler::Host* host,
-    mojo::PendingReceiver<mojom::WebClientHandler> receiver,
-    base::OnceClosure disconnect_callback,
-    base::RepeatingCallback<void(mojom::WebClientState)> state_changed_callback) {
-  std::make_unique<WebClientHandlerImpl>(
-      browser_context, host, std::move(receiver),
-      std::move(disconnect_callback), std::move(state_changed_callback));
-}
-
 }  // namespace glic
 """
 
@@ -390,7 +381,7 @@ for root, _, files in os.walk('.'):
         p = os.path.join(root, "glic_web_client_handler.cc")
         with open(p, "w", encoding="utf-8") as fp:
             fp.write(code)
-        print(f"[aerium] Successfully rewrote clean {p}")
+        print(f"[aerium] Successfully rewrote {p}")
 EOF
 
 find . -path "*/obj/chrome/browser/glic/impl/glic_web_client_handler.o" -delete 2>/dev/null || true
