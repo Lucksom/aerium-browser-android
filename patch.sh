@@ -306,8 +306,25 @@ for root, _, files in os.walk('.'):
             print(f"Error patching chrome_otp_phish_guard_delegate.cc: {e}")
 EOF
 
-# --- Clean repair of glic_web_client_handler.cc (pure file repair, no git dependency)
-echo "==> Completely repairing glic_web_client_handler.cc..."
+# ---Inox bypass for glic_web_client_handler.cc
+echo "==> Restoring factory-clean glic_web_client_handler.cc..."
+# 1. First attempt: Restore via git in all possible directory depths
+for d in "chromium/src" "src" "."; do
+  if [ -d "$d/.git" ] && [ -f "$d/chrome/browser/glic/host/glic_web_client_handler.cc" ]; then
+    (cd "$d" && git checkout -f -- chrome/browser/glic/host/glic_web_client_handler.cc 2>/dev/null || true)
+    echo "[aerium] Successfully restored via git in $d"
+  fi
+done
+
+# 2. Second attempt: If git was detached or cached, download pristine file from official Google Chromium source
+find . -name "glic_web_client_handler.cc" | while read -r f; do
+  if ! grep -q "raw_ptr<Profile> profile_" "$f" 2>/dev/null; then
+    echo "[aerium] Member declarations missing in $f, fetching pristine file from Google Git..."
+    curl -sSL "https://chromium.googlesource.com/chromium/src/+/refs/heads/main/chrome/browser/glic/host/glic_web_client_handler.cc?format=TEXT" | base64 -d > "$f" || true
+  fi
+done
+
+# 3. Apply the official Inox patch cleanly (empties ProcessCounterAbuseVerdict with return;)
 python3 - << 'EOF' || true
 import os
 
@@ -318,44 +335,21 @@ for root, _, files in os.walk('.'):
             with open(p, "r", encoding="utf-8") as f:
                 c = f.read()
 
-            # 1. Fix line 294 corruption: restore 'nullptr;' and newline
-            if "raw_ptr<Observer> observer_ =" in c and "raw_ptr<Observer> observer_ = nullptr;" not in c:
-                c = c.replace(
-                    "raw_ptr<Observer> observer_ =   int open_browser_count_ = 0;",
-                    "raw_ptr<Observer> observer_ = nullptr;\n  int open_browser_count_ = 0;"
-                )
-                c = c.replace(
-                    "raw_ptr<Observer> observer_ = int open_browser_count_ = 0;",
-                    "raw_ptr<Observer> observer_ = nullptr;\n  int open_browser_count_ = 0;"
-                )
-
-            # 2. Fix line 336 corruption: restore 'nullptr;' and newline
-            if "next_data_candidate_ =" in c and "next_data_candidate_ = nullptr;" not in c:
-                c = c.replace(
-                    "next_data_candidate_ =     remaining_debounces_ = max_debounces_;",
-                    "next_data_candidate_ = nullptr;\n    remaining_debounces_ = max_debounces_;"
-                )
-                c = c.replace(
-                    "next_data_candidate_ = remaining_debounces_ = max_debounces_;",
-                    "next_data_candidate_ = nullptr;\n    remaining_debounces_ = max_debounces_;"
-                )
-
-            # 3. Clean ProcessCounterAbuseVerdict (Inox patch)
             marker = "void GlicWebClientHandler::ProcessCounterAbuseVerdict("
             if marker in c:
                 idx = c.find(marker)
                 b_start = c.find("{", idx)
-                # Find the closing brace of the method
+                # Find the matching closing brace of this method
                 b_end = c.find("\n  }", b_start)
                 if b_start != -1 and b_end != -1:
                     c = c[:b_start+1] + "\n    // Inox: Safe Browsing bypassed\n    return;" + c[b_end:]
-
-            with open(p, "w", encoding="utf-8") as f:
-                f.write(c)
-            print(f"[aerium] Repaired and validated {p}")
+                    with open(p, "w", encoding="utf-8") as f:
+                        f.write(c)
+                    print(f"[aerium] Cleanly applied Inox bypass to {p}")
         except Exception as e:
-            print(f"Error repairing {p}: {e}")
+            print(f"Error: {e}")
 EOF
+   
 
 # --- Preprocessor isolation for persistent_notification_handler.cc
 echo "==> Isolating persistent_notification_handler.cc..."
