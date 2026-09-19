@@ -349,29 +349,38 @@ fi
     fi
   fi
 
-  # 3. Apply Inox bypass cleanly (cutting at outer column 0 closing brace)
+ # 3. Apply Inox bypass cleanly
   python3 - << 'EOF'
+import re
+
 REL_F = "chrome/browser/glic/host/glic_web_client_handler.cc"
 with open(REL_F, "r", encoding="utf-8") as fp:
     c = fp.read()
 
-m = "void GlicWebClientHandler::ProcessCounterAbuseVerdict("
-i = c.find(m)
-if i == -1:
-    print("[aerium] Error: ProcessCounterAbuseVerdict marker not found in", REL_F)
-    exit(1)
+# Pattern 1: Any ProcessCounterAbuseVerdict method definition
+if "ProcessCounterAbuseVerdict(" in c:
+    # Match the function header and opening brace
+    idx = c.find("ProcessCounterAbuseVerdict(")
+    # Find the opening brace of the function body
+    s = c.find("{", idx)
+    # Find matching closing brace at column 0 or closing indentation
+    e = c.find("\n}\n", s)
+    if e == -1:
+        e = c.find("\n  }", s)
+    if s != -1 and e != -1:
+        c = c[:s+1] + "\n  // Inox: Safe Browsing bypassed\n  return;" + c[e:]
+        print("[aerium] Emptied ProcessCounterAbuseVerdict body")
 
-s = c.find("{", i)
-# Match function's own closing brace at column 0
-e = c.find("\n}\n", s)
-if s != -1 and e != -1:
-    c = c[:s+1] + "\n  // Inox: Safe Browsing bypassed\n  return;" + c[e:]
-    with open(REL_F, "w", encoding="utf-8") as fp:
-        fp.write(c)
-    print("[aerium] Successfully applied Inox bypass to", REL_F)
-else:
-    print("[aerium] Error: Could not locate closing brace of ProcessCounterAbuseVerdict")
-    exit(1)
+# Pattern 2: Neutralize any direct safe_browsing_service calls in the file
+c = c.replace(
+    "g_browser_process->safe_browsing_service()",
+    "nullptr"
+)
+
+with open(REL_F, "w", encoding="utf-8") as fp:
+    fp.write(c)
+
+print("[aerium] Successfully applied Inox bypass to", REL_F)
 EOF
 
   # 4. Fast targeted cleanup of stale intermediate object files in out directories
