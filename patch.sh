@@ -392,6 +392,16 @@ EOF
 
 find . -path "*/obj/chrome/browser/glic/impl/glic_web_client_handler.o" -delete 2>/dev/null || true
 
+# --- Dump GLIC Interface Definitions for Exact Stubbing
+echo "=== GLIC MOJOM DUMP ==="
+MOJOM_H=$(find . out/Default/gen -name "glic.mojom.h" -path "*glic/host*" 2>/dev/null | head -n 1)
+if [ -n "$MOJOM_H" ] && [ -f "$MOJOM_H" ]; then
+  awk '/^class WebClientHandler /,/^};/' "$MOJOM_H" | grep -E "virtual.*= 0;" || true
+fi
+echo "=== GLIC ACCESS DUMP ==="
+cat chrome/browser/glic/host/glic_web_client_access.h 2>/dev/null || cat chromium/src/chrome/browser/glic/host/glic_web_client_access.h 2>/dev/null || find . -name "glic_web_client_access.h" -exec cat {} + 2>/dev/null || true
+echo "========================"
+
 # --- Early Compilation Diagnostic for glic_web_client_handler
 for outdir in "out/Default" "chromium/src/out/Default"; do
   if [ -f "$outdir/build.ninja" ]; then
