@@ -306,50 +306,77 @@ for root, _, files in os.walk('.'):
             print(f"Error patching chrome_otp_phish_guard_delegate.cc: {e}")
 EOF
 
-# ---Inox bypass for glic_web_client_handler.cc
-echo "==> Restoring factory-clean glic_web_client_handler.cc..."
-# 1. First attempt: Restore via git in all possible directory depths
-for d in "chromium/src" "src" "."; do
-  if [ -d "$d/.git" ] && [ -f "$d/chrome/browser/glic/host/glic_web_client_handler.cc" ]; then
-    (cd "$d" && git checkout -f -- chrome/browser/glic/host/glic_web_client_handler.cc 2>/dev/null || true)
-    echo "[aerium] Successfully restored via git in $d"
+# --- Inox bypass for glic_web_client_handler.cc (hardened version-pinned restore)
+REL_F="chrome/browser/glic/host/glic_web_client_handler.cc"
+
+# Determine source root directory
+if [ -f "$REL_F" ]; then
+  SRC_DIR="."
+elif [ -f "chromium/src/$REL_F" ]; then
+  SRC_DIR="chromium/src"
+else
+  echo "[aerium] Error: Could not locate $REL_F in workspace"
+  exit 1
+fi
+
+(
+  cd "$SRC_DIR" || exit 1
+  echo "==> Working in source directory: $SRC_DIR"
+
+  # 1. Restore the file from local git checkout if git repository is valid
+  if [ -d .git ] && git checkout -f HEAD -- "$REL_F" 2>/dev/null; then
+    echo "[aerium] Restored $REL_F via git checkout"
+  else
+    # 2. No usable git: read exact Chromium version from chrome/VERSION
+    if [ ! -f "chrome/VERSION" ]; then
+      echo "[aerium] Error: chrome/VERSION not found in $SRC_DIR"
+      exit 1
+    fi
+
+    . <(sed 's/^\([A-Z]*\)=\(.*\)/\1=\2/' chrome/VERSION)
+    TAG="$MAJOR.$MINOR.$BUILD.$PATCH"
+    echo "[aerium] Fetching $REL_F matching exact tag $TAG..."
+
+    URL="https://chromium.googlesource.com/chromium/src/+/refs/tags/$TAG/$REL_F?format=TEXT"
+    if curl -fsSL "$URL" -o "$REL_F.b64" && base64 -d "$REL_F.b64" > "$REL_F.new" && [ -s "$REL_F.new" ]; then
+      mv "$REL_F.new" "$REL_F"
+      rm -f "$REL_F.b64"
+      echo "[aerium] Successfully restored $REL_F at tag $TAG"
+    else
+      echo "[aerium] Error: Tag fetch failed or output was empty for $TAG"
+      rm -f "$REL_F.b64" "$REL_F.new"
+      exit 1
+    fi
   fi
-done
 
-# 2. Second attempt: If git was detached or cached, download pristine file from official Google Chromium source
-find . -name "glic_web_client_handler.cc" | while read -r f; do
-  if ! grep -q "raw_ptr<Profile> profile_" "$f" 2>/dev/null; then
-    echo "[aerium] Member declarations missing in $f, fetching pristine file from Google Git..."
-    curl -sSL "https://chromium.googlesource.com/chromium/src/+/refs/heads/main/chrome/browser/glic/host/glic_web_client_handler.cc?format=TEXT" | base64 -d > "$f" || true
-  fi
-done
+  # 3. Apply Inox bypass cleanly (cutting at outer column 0 closing brace)
+  python3 - << 'EOF'
+REL_F = "chrome/browser/glic/host/glic_web_client_handler.cc"
+with open(REL_F, "r", encoding="utf-8") as fp:
+    c = fp.read()
 
-# 3. Apply the official Inox patch cleanly (empties ProcessCounterAbuseVerdict with return;)
-python3 - << 'EOF' || true
-import os
+m = "void GlicWebClientHandler::ProcessCounterAbuseVerdict("
+i = c.find(m)
+if i == -1:
+    print("[aerium] Error: ProcessCounterAbuseVerdict marker not found in", REL_F)
+    exit(1)
 
-for root, _, files in os.walk('.'):
-    if "glic_web_client_handler.cc" in files:
-        p = os.path.join(root, "glic_web_client_handler.cc")
-        try:
-            with open(p, "r", encoding="utf-8") as f:
-                c = f.read()
-
-            marker = "void GlicWebClientHandler::ProcessCounterAbuseVerdict("
-            if marker in c:
-                idx = c.find(marker)
-                b_start = c.find("{", idx)
-                # Find the matching closing brace of this method
-                b_end = c.find("\n  }", b_start)
-                if b_start != -1 and b_end != -1:
-                    c = c[:b_start+1] + "\n    // Inox: Safe Browsing bypassed\n    return;" + c[b_end:]
-                    with open(p, "w", encoding="utf-8") as f:
-                        f.write(c)
-                    print(f"[aerium] Cleanly applied Inox bypass to {p}")
-        except Exception as e:
-            print(f"Error: {e}")
+s = c.find("{", i)
+# Match function's own closing brace at column 0
+e = c.find("\n}\n", s)
+if s != -1 and e != -1:
+    c = c[:s+1] + "\n  // Inox: Safe Browsing bypassed\n  return;" + c[e:]
+    with open(REL_F, "w", encoding="utf-8") as fp:
+        fp.write(c)
+    print("[aerium] Successfully applied Inox bypass to", REL_F)
+else:
+    print("[aerium] Error: Could not locate closing brace of ProcessCounterAbuseVerdict")
+    exit(1)
 EOF
-   
+
+  # 4. Fast targeted cleanup of stale intermediate object files in out directories
+  find out -path "*/obj/chrome/browser/glic/impl/glic_web_client_handler.o" -delete 2>/dev/null || true
+) 
 
 # --- Preprocessor isolation for persistent_notification_handler.cc
 echo "==> Isolating persistent_notification_handler.cc..."
