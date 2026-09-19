@@ -307,10 +307,6 @@ for root, _, files in os.walk('.'):
 EOF
 
 # --- glic_web_client_handler Clean Implementation
-echo "=== GLIC HEADER DUMP ==="
-cat chrome/browser/glic/host/glic_web_client_handler.h 2>/dev/null || cat chromium/src/chrome/browser/glic/host/glic_web_client_handler.h 2>/dev/null || find . -name "glic_web_client_handler.h" -exec cat {} + 2>/dev/null || true
-echo "========================"
-
 python3 - << 'EOF' || true
 import os
 
@@ -330,14 +326,15 @@ namespace glic {
 
 namespace {
 
-class WebClientHandlerImpl : public mojom::WebClientHandler {
+class WebClientHandlerImpl : public mojom::WebClientHandler,
+                             public GlicWebClientAccess {
  public:
   WebClientHandlerImpl(
-      content::BrowserContext* browser_context,
       Host* host,
+      content::BrowserContext* browser_context,
       mojo::PendingReceiver<mojom::WebClientHandler> receiver,
       base::OnceClosure disconnect_callback,
-      base::RepeatingCallback<void(mojom::WebClientState)> state_changed_callback)
+      WebClientStateChangedCallback state_changed_callback)
       : receiver_(this, std::move(receiver)),
         disconnect_callback_(std::move(disconnect_callback)),
         state_changed_callback_(std::move(state_changed_callback)) {
@@ -353,13 +350,11 @@ class WebClientHandlerImpl : public mojom::WebClientHandler {
     }
   }
 
-  void WebClientInitialized(base::OnceClosure callback) {
-    if (callback) {
-      std::move(callback).Run();
-    }
-  }
+  void WebClientInitialized() override {}
 
-  void CreateTab(const ::GURL& url, mojom::CreateTabOptionsPtr create_options, CreateTabCallback callback) override {
+  void CreateTab(const ::GURL& url,
+                 mojom::CreateTabOptionsPtr create_options,
+                 CreateTabCallback callback) override {
     std::move(callback).Run(nullptr);
   }
 
@@ -368,10 +363,21 @@ class WebClientHandlerImpl : public mojom::WebClientHandler {
  private:
   mojo::Receiver<mojom::WebClientHandler> receiver_;
   base::OnceClosure disconnect_callback_;
-  base::RepeatingCallback<void(mojom::WebClientState)> state_changed_callback_;
+  WebClientStateChangedCallback state_changed_callback_;
 };
 
 }  // namespace
+
+std::unique_ptr<GlicWebClientAccess> MakeGlicWebClient(
+    Host* host,
+    content::BrowserContext* browser_context,
+    mojo::PendingReceiver<glic::mojom::WebClientHandler> receiver,
+    base::OnceClosure disconnect_callback,
+    WebClientStateChangedCallback state_changed_callback) {
+  return std::make_unique<WebClientHandlerImpl>(
+      host, browser_context, std::move(receiver),
+      std::move(disconnect_callback), std::move(state_changed_callback));
+}
 
 }  // namespace glic
 """
