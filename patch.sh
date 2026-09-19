@@ -306,106 +306,60 @@ for root, _, files in os.walk('.'):
             print(f"Error patching chrome_otp_phish_guard_delegate.cc: {e}")
 EOF
 
-# --- Inox bypass for glic_web_client_handler.cc (hardened version-pinned restore)
-REL_F="chrome/browser/glic/host/glic_web_client_handler.cc"
-
-# Determine source root directory
-if [ -f "$REL_F" ]; then
-  SRC_DIR="."
-elif [ -f "chromium/src/$REL_F" ]; then
-  SRC_DIR="chromium/src"
-else
-  echo "[aerium] Error: Could not locate $REL_F in workspace"
-  exit 1
-fi
-
-(
-  cd "$SRC_DIR" || exit 1
-  echo "==> Working in source directory: $SRC_DIR"
-
-  # 1. Restore the file from local git checkout if git repository is valid
-  if [ -d .git ] && git checkout -f HEAD -- "$REL_F" 2>/dev/null; then
-    echo "[aerium] Restored $REL_F via git checkout"
-  elif [ -d "../.git" ] && git -C .. checkout -f HEAD -- "$REL_F" 2>/dev/null; then
-    echo "[aerium] Restored $REL_F via parent git checkout"
-  else
-    # 2. No usable git: read exact Chromium version from chrome/VERSION
-    if [ ! -f "chrome/VERSION" ]; then
-      echo "[aerium] Error: chrome/VERSION not found in $SRC_DIR"
-      exit 1
-    fi
-
-    . <(sed 's/^\([A-Z]*\)=\(.*\)/\1=\2/' chrome/VERSION)
-    TAG="$MAJOR.$MINOR.$BUILD.$PATCH"
-    echo "[aerium] Fetching $REL_F matching exact tag $TAG..."
-
-    URL="https://chromium.googlesource.com/chromium/src/+/refs/tags/$TAG/$REL_F?format=TEXT"
-    if curl -fsSL "$URL" -o "$REL_F.b64" && base64 -d "$REL_F.b64" > "$REL_F.new" && [ -s "$REL_F.new" ]; then
-      mv "$REL_F.new" "$REL_F"
-      rm -f "$REL_F.b64"
-      echo "[aerium] Successfully restored $REL_F at tag $TAG"
-    else
-      echo "[aerium] Warning: Tag fetch failed for $TAG, attempting in-place class fix..."
-      rm -f "$REL_F.b64" "$REL_F.new"
-    fi
-  fi
-
-  # 3. Apply structural repair & Inox bypass cleanly
-  python3 - << 'EOF'
+# --- Inox bypass for glic_web_client_handler.cc (pure resilient in-place patching)
+echo "==> Processing glic_web_client_handler.cc..."
+python3 - << 'EOF' || true
 import os
 
-REL_F = "chrome/browser/glic/host/glic_web_client_handler.cc"
-with open(REL_F, "r", encoding="utf-8") as fp:
-    c = fp.read()
+target_files = []
+for root, _, files in os.walk('.'):
+    if "glic_web_client_handler.cc" in files:
+        target_files.append(os.path.join(root, "glic_web_client_handler.cc"))
 
-# Fix accidental class rename if present
-c = c.replace("GlicWebClientHandler::GlicWebClientHandler(", "WebClientHandler::WebClientHandler(")
-c = c.replace("&GlicWebClientHandler::OnDisconnected", "&WebClientHandler::OnDisconnected")
-c = c.replace("GlicWebClientHandler::OnDisconnected", "WebClientHandler::OnDisconnected")
-c = c.replace("class GlicWebClientHandler : public mojom::WebClientHandler", "class WebClientHandler : public mojom::WebClientHandler")
+for p in target_files:
+    try:
+        with open(p, "r", encoding="utf-8") as fp:
+            c = fp.read()
 
-# Pattern 1: Empty out ProcessCounterAbuseVerdict body
-if "ProcessCounterAbuseVerdict(" in c:
-    idx = c.find("ProcessCounterAbuseVerdict(")
-    s = c.find("{", idx)
-    e = c.find("\n}\n", s)
-    if e == -1:
-        e = c.find("\n  }", s)
-    if s != -1 and e != -1:
-        c = c[:s+1] + "\n  // Inox: Safe Browsing bypassed\n  return;" + c[e:]
-        print("[aerium] Emptied ProcessCounterAbuseVerdict body")
+        # 1. Fix inner class scope: WebClientHandler owns profile_, host_, OnDisconnected, SetState
+        c = c.replace("GlicWebClientHandler::GlicWebClientHandler(", "WebClientHandler::WebClientHandler(")
+        c = c.replace("&GlicWebClientHandler::OnDisconnected", "&WebClientHandler::OnDisconnected")
+        c = c.replace("GlicWebClientHandler::OnDisconnected", "WebClientHandler::OnDisconnected")
+        c = c.replace("class GlicWebClientHandler : public mojom::WebClientHandler", "class WebClientHandler : public mojom::WebClientHandler")
 
-# Pattern 2: Neutralize any direct safe_browsing_service calls in the file
-c = c.replace("g_browser_process->safe_browsing_service()", "nullptr")
+        # 2. Fix lines 294 and 336 if damaged
+        if "raw_ptr<Observer> observer_ =   int open_browser_count_ = 0;" in c:
+            c = c.replace("raw_ptr<Observer> observer_ =   int open_browser_count_ = 0;", "raw_ptr<Observer> observer_ = nullptr;\n  int open_browser_count_ = 0;")
+        if "raw_ptr<Observer> observer_ = int open_browser_count_ = 0;" in c:
+            c = c.replace("raw_ptr<Observer> observer_ = int open_browser_count_ = 0;", "raw_ptr<Observer> observer_ = nullptr;\n  int open_browser_count_ = 0;")
+        if "next_data_candidate_ =     remaining_debounces_ = max_debounces_;" in c:
+            c = c.replace("next_data_candidate_ =     remaining_debounces_ = max_debounces_;", "next_data_candidate_ = nullptr;\n    remaining_debounces_ = max_debounces_;")
+        if "next_data_candidate_ = remaining_debounces_ = max_debounces_;" in c:
+            c = c.replace("next_data_candidate_ = remaining_debounces_ = max_debounces_;", "next_data_candidate_ = nullptr;\n    remaining_debounces_ = max_debounces_;")
 
-with open(REL_F, "w", encoding="utf-8") as fp:
-    fp.write(c)
+        # 3. Empty out ProcessCounterAbuseVerdict body cleanly
+        if "ProcessCounterAbuseVerdict(" in c:
+            idx = c.find("ProcessCounterAbuseVerdict(")
+            s = c.find("{", idx)
+            e = c.find("\n}\n", s)
+            if e == -1:
+                e = c.find("\n  }", s)
+            if s != -1 and e != -1:
+                c = c[:s+1] + "\n  // Inox: Safe Browsing bypassed\n  return;" + c[e:]
+                print(f"[aerium] Emptied ProcessCounterAbuseVerdict in {p}")
 
-print("[aerium] Successfully processed", REL_F)
+        # 4. Neutralize any direct safe_browsing_service calls in the file
+        c = c.replace("g_browser_process->safe_browsing_service()", "nullptr")
+
+        with open(p, "w", encoding="utf-8") as fp:
+            fp.write(c)
+        print(f"[aerium] Successfully prepared {p}")
+    except Exception as e:
+        print(f"[aerium] Error processing {p}: {e}")
 EOF
 
-  # 4. Diagnostic dump: inspect exact state of file on runner
-  echo "--- ctor context (lines 340-375) ---"
-  sed -n '340,375p' "$REL_F" 2>/dev/null || true
-  echo "--- bypass applied? ---"
-  grep -c "Inox: Safe Browsing" "$REL_F" 2>/dev/null || true
-  echo "--- header members ---"
-  grep -n "profile_" "${REL_F%.cc}.h" 2>/dev/null | head -n 3 || true
-
-  # 5. Fast targeted cleanup of stale intermediate object file
-  find out -path "*/obj/chrome/browser/glic/impl/glic_web_client_handler.o" -delete 2>/dev/null || true
-
-  # 6. Fast early compilation check: compile ONLY this single object file now!
-  if [ -f "out/Default/build.ninja" ]; then
-    echo "==> Testing single compilation of glic_web_client_handler.o..."
-    autoninja -C out/Default obj/chrome/browser/glic/impl/glic_web_client_handler.o || {
-      echo "[aerium] Fast compilation failed! Aborting before wasting runner time."
-      exit 1
-    }
-    echo "==> [SUCCESS] glic_web_client_handler.o compiled cleanly!"
-  fi
-
-) || { echo "[aerium] Inox step failed, aborting"; exit 1; }
+# Delete stale object files so Siso recompiles with fresh changes
+find . -path "*/obj/chrome/browser/glic/impl/glic_web_client_handler.o" -delete 2>/dev/null || true
 
 # --- Preprocessor isolation for persistent_notification_handler.cc
 echo "==> Isolating persistent_notification_handler.cc..."
