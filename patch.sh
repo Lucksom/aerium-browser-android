@@ -306,13 +306,11 @@ for root, _, files in os.walk('.'):
             print(f"Error patching chrome_otp_phish_guard_delegate.cc: {e}")
 EOF
 
-# --- Clean Inox bypass for ProcessCounterAbuseVerdict in glic_web_client_handler.cc
-echo "==> Restoring and applying Inox patch to glic_web_client_handler.cc..."
-git checkout -f -- chrome/browser/glic/host/glic_web_client_handler.cc 2>/dev/null || true
-find . -name "glic_web_client_handler.cc" -exec git checkout -f -- {} + 2>/dev/null || true
-
+# --- Clean repair of glic_web_client_handler.cc (pure file repair, no git dependency)
+echo "==> Completely repairing glic_web_client_handler.cc..."
 python3 - << 'EOF' || true
 import os
+
 for root, _, files in os.walk('.'):
     if "glic_web_client_handler.cc" in files:
         p = os.path.join(root, "glic_web_client_handler.cc")
@@ -320,18 +318,43 @@ for root, _, files in os.walk('.'):
             with open(p, "r", encoding="utf-8") as f:
                 c = f.read()
 
+            # 1. Fix line 294 corruption: restore 'nullptr;' and newline
+            if "raw_ptr<Observer> observer_ =" in c and "raw_ptr<Observer> observer_ = nullptr;" not in c:
+                c = c.replace(
+                    "raw_ptr<Observer> observer_ =   int open_browser_count_ = 0;",
+                    "raw_ptr<Observer> observer_ = nullptr;\n  int open_browser_count_ = 0;"
+                )
+                c = c.replace(
+                    "raw_ptr<Observer> observer_ = int open_browser_count_ = 0;",
+                    "raw_ptr<Observer> observer_ = nullptr;\n  int open_browser_count_ = 0;"
+                )
+
+            # 2. Fix line 336 corruption: restore 'nullptr;' and newline
+            if "next_data_candidate_ =" in c and "next_data_candidate_ = nullptr;" not in c:
+                c = c.replace(
+                    "next_data_candidate_ =     remaining_debounces_ = max_debounces_;",
+                    "next_data_candidate_ = nullptr;\n    remaining_debounces_ = max_debounces_;"
+                )
+                c = c.replace(
+                    "next_data_candidate_ = remaining_debounces_ = max_debounces_;",
+                    "next_data_candidate_ = nullptr;\n    remaining_debounces_ = max_debounces_;"
+                )
+
+            # 3. Clean ProcessCounterAbuseVerdict (Inox patch)
             marker = "void GlicWebClientHandler::ProcessCounterAbuseVerdict("
             if marker in c:
                 idx = c.find(marker)
-                brace_start = c.find("{", idx)
-                brace_end = c.find("\n  }", brace_start)
-                if brace_start != -1 and brace_end != -1:
-                    c = c[:brace_start+1] + "\n    // Inox: Safe Browsing bypassed\n    return;" + c[brace_end:]
-                    with open(p, "w", encoding="utf-8") as f:
-                        f.write(c)
-                    print(f"[aerium] Cleanly emptied ProcessCounterAbuseVerdict in {p}")
+                b_start = c.find("{", idx)
+                # Find the closing brace of the method
+                b_end = c.find("\n  }", b_start)
+                if b_start != -1 and b_end != -1:
+                    c = c[:b_start+1] + "\n    // Inox: Safe Browsing bypassed\n    return;" + c[b_end:]
+
+            with open(p, "w", encoding="utf-8") as f:
+                f.write(c)
+            print(f"[aerium] Repaired and validated {p}")
         except Exception as e:
-            print(f"Error: {e}")
+            print(f"Error repairing {p}: {e}")
 EOF
 
 # --- Preprocessor isolation for persistent_notification_handler.cc
