@@ -386,11 +386,11 @@ find . -path "*/obj/chrome/browser/glic/impl/glic_web_client_handler.o" -delete 
 # --- Early Compilation Diagnostic for glic_web_client_handler
 for outdir in "out/Default" "chromium/src/out/Default"; do
   if [ -f "$outdir/build.ninja" ]; then
-    echo "==> Running early compilation diagnostic for glic_web_client_handler.o..."
+    echo "==> Running early compilation diagnostic for glic_web_client_handler.o in $outdir..."
     export PATH="$PATH:$GITHUB_WORKSPACE/chromium/depot_tools:$GITHUB_WORKSPACE/depot_tools"
     AUTONINJA_BIN=$(which autoninja 2>/dev/null || find . -name "autoninja" | head -n 1)
     if [ -n "$AUTONINJA_BIN" ]; then
-      python3 "$AUTONINJA_BIN" -C "$outdir" obj/chrome/browser/glic/impl/glic_web_client_handler.o || {
+      bash "$AUTONINJA_BIN" -C "$outdir" obj/chrome/browser/glic/impl/glic_web_client_handler.o || {
         echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
         echo "[aerium] Diagnostic failed: glic_web_client_handler.o failed to compile."
         echo "Aborting early to prevent waiting through the full build queue."
@@ -401,7 +401,7 @@ for outdir in "out/Default" "chromium/src/out/Default"; do
     fi
     break
   fi
-done
+done 
 
 # --- Persistent Notification Handler Preprocessor Isolation
 echo "==> Isolating persistent_notification_handler.cc..."
