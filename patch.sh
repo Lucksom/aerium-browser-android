@@ -309,6 +309,63 @@ for root, _, files in os.walk('.'):
             print(f"Error patching chrome_otp_phish_guard_delegate.cc: {e}")
 EOF
 
+# --- Clean args.gn to avoid invalid GN assertions on Android
+for outdir in "out/Default" "chromium/src/out/Default"; do
+  ARGS="$outdir/args.gn"
+  if [ -f "$ARGS" ]; then
+    sed -i "/enable_extensions_core/d" "$ARGS" 2>/dev/null || true
+    sed -i "/enable_desktop_android_extensions/d" "$ARGS" 2>/dev/null || true
+    # Fix any concatenated line
+    sed -i 's/falseenable_extensions_core = true/false/g' "$ARGS" 2>/dev/null || true
+    sed -i 's/falseenable_extensions_core/false/g' "$ARGS" 2>/dev/null || true
+  fi
+done
+
+# --- Guard aerium_extensions in chrome_web_ui_configs.cc
+echo "==> Guarding aerium_extensions in chrome_web_ui_configs.cc..."
+python3 - << 'EOF' || true
+import os
+
+for root, _, files in os.walk('.'):
+    if "chrome_web_ui_configs.cc" in files:
+        p = os.path.join(root, "chrome_web_ui_configs.cc")
+        try:
+            with open(p, "r", encoding="utf-8") as f:
+                c = f.read()
+
+            # Ensure buildflags header is present
+            if '#include "extensions/buildflags/buildflags.h"' not in c:
+                c = '#include "extensions/buildflags/buildflags.h"\n' + c
+
+            # Guard aerium_extensions.h include
+            if '#include "chrome/browser/ui/webui/aerium_extensions.h"' in c and '#if BUILDFLAG(ENABLE_EXTENSIONS_CORE)' not in c:
+                c = c.replace(
+                    '#include "chrome/browser/ui/webui/aerium_extensions.h"',
+                    '#if BUILDFLAG(ENABLE_EXTENSIONS_CORE)\n#include "chrome/browser/ui/webui/aerium_extensions.h"\n#endif'
+                )
+
+            # Guard the registration call: map.AddWebUIConfig(std::make_unique<AeriumExtensionsUIConfig>());
+            lines = c.splitlines()
+            out = []
+            for line in lines:
+                if "AeriumExtensionsUIConfig" in line and not line.strip().startswith("#"):
+                    out.append("#if BUILDFLAG(ENABLE_EXTENSIONS_CORE)")
+                    out.append(line)
+                    out.append("#endif")
+                else:
+                    out.append(line)
+            c = "\n".join(out) + "\n"
+
+            with open(p, "w", encoding="utf-8") as f:
+                f.write(c)
+            print(f"[aerium] Successfully guarded aerium_extensions in {p}")
+        except Exception as e:
+            print(f"Error: {e}")
+EOF
+
+# Invalidate object files so Ninja recompiles with the guard
+find . -path "*/obj/chrome/browser/ui/webui/configs/chrome_web_ui_configs.o" -delete 2>/dev/null || true
+
 # --- glic_web_client_handler Clean Implementation
 python3 - << 'EOF' || true
 import os
@@ -559,52 +616,6 @@ for root, _, files in os.walk('.'):
             fp.write(code)
         print(f"[aerium] Successfully rewrote clean {p}")
 EOF
-
-find . -path "*/obj/chrome/browser/glic/impl/glic_web_client_handler.o" -delete 2>/dev/null || true
-
-# --- Enable extensions core for the Aerium extensions UI
-for outdir in "out/Default" "chromium/src/out/Default"; do
-  ARGS="$outdir/args.gn"
-  if [ -f "$ARGS" ]; then
-    # Fix any previously concatenated line
-    sed -i 's/falseenable_extensions_core/false\nenable_extensions_core/g' "$ARGS" 2>/dev/null || true
-    # Ensure args.gn has a trailing newline before appending
-    [ -n "$(tail -c1 "$ARGS")" ] && echo >> "$ARGS"
-    # Remove existing enable_extensions_core if present, then append cleanly
-    sed -i "/^enable_extensions_core *=/d" "$ARGS"
-    echo "enable_extensions_core = true" >> "$ARGS"
-    echo "[aerium] args.gn extensions lines:"
-    grep -n "extensions" "$ARGS" || true
-  fi
-done
-
-# --- Decouple heavy installer headers from aerium_extensions.h
-echo "==> Decoupling installer headers from aerium_extensions.h..."
-python3 - << 'EOF' || true
-import os
-for root, _, files in os.walk('.'):
-    if "aerium_extensions.h" in files:
-        p = os.path.join(root, "aerium_extensions.h")
-        try:
-            with open(p, "r", encoding="utf-8") as f:
-                c = f.read()
-            replacements = {
-                '#include "chrome/browser/extensions/extension_install_prompt.h"': 'class ExtensionInstallPrompt;',
-                '#include "extensions/browser/crx_installer.h"': 'namespace extensions { class CrxInstaller; }',
-                '#include "extensions/browser/zipfile_installer.h"': 'namespace extensions { class ZipFileInstaller; }',
-                '#include "chrome/browser/extensions/chrome_zipfile_installer.h"': '',
-            }
-            for old, new in replacements.items():
-                c = c.replace(old, new)
-            with open(p, "w", encoding="utf-8") as f:
-                f.write(c)
-            print(f"[aerium] Decoupled heavy installer headers in {p}")
-        except Exception as e:
-            print(f"Error patching {p}: {e}")
-EOF
-
-# Invalidate object files so Ninja rebuilds them with new args
-find . -path "*/obj/chrome/browser/ui/webui/configs/chrome_web_ui_configs.o" -delete 2>/dev/null || true
 
 # --- Early Compilation Diagnostic for BOTH WebUI Configs and GLIC Handler
 for outdir in "out/Default" "chromium/src/out/Default"; do
