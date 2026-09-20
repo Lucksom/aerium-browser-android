@@ -396,12 +396,18 @@ for root, _, files in os.walk('.'):
         try:
             with open(p, "r", encoding="utf-8") as f:
                 c = f.read()
+            # Silence unused variable warning for prefs
+            if "PrefService* prefs =" in c and "(void)prefs;" not in c:
+                c = c.replace(
+                    "PrefService* prefs = Profile::FromBrowserContext(browser_context)->GetPrefs();",
+                    "PrefService* prefs = Profile::FromBrowserContext(browser_context)->GetPrefs();\n  (void)prefs;"
+                )
             target = "prefs->GetBoolean(prefs::kSafeBrowsingProceedAnywayDisabled)"
             if target in c:
                 c = c.replace(target, "false /* safe_browsing_proceed_anyway_disabled */")
-                with open(p, "w", encoding="utf-8") as f:
-                    f.write(c)
-                print(f"[aerium] Successfully patched {p}")
+            with open(p, "w", encoding="utf-8") as f:
+                f.write(c)
+            print(f"[aerium] Successfully patched {p} with (void)prefs")
         except Exception as e:
             print(f"Error patching {p}: {e}")
 EOF
