@@ -1,5 +1,23 @@
 #!/bin/bash
 
+# --- Prevent JVM OOM during final_dex / R8
+export _JAVA_OPTIONS="-Xmx7g -Xms1g -XX:+UseG1GC -XX:MinHeapFreeRatio=20 -XX:MaxHeapFreeRatio=40"
+
+# --- Add Extra Swapfile if available space on /dev/mapper/buildvg-buildlv
+python3 - << 'EOF' || true
+import os, subprocess
+try:
+    # Check if extra swap is already active
+    swaps = subprocess.check_output(["swapon", "--show"], text=True)
+    if "swapfile_extra" not in swaps:
+        swap_path = "/home/runner/work/aerium-browser-android/aerium-browser-android/chromium/swapfile_extra"
+        # Allocate 6GB swap on the build partition (which has 50GB free)
+        subprocess.run(f"sudo fallocate -l 6G {swap_path} && sudo chmod 600 {swap_path} && sudo mkswap {swap_path} && sudo swapon {swap_path}", shell=True)
+        print("[aerium] Successfully created 6GB extra swapfile to prevent OOM")
+except Exception as e:
+    print(f"[aerium] Notice on swap: {e}")
+EOF
+
 # --- Free Root Filesystem Disk Space
 sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android /usr/local/share/boost /usr/local/share/powershell 2>/dev/null || true
 
