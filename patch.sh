@@ -562,14 +562,19 @@ EOF
 
 find . -path "*/obj/chrome/browser/glic/impl/glic_web_client_handler.o" -delete 2>/dev/null || true
 
-
-# --- Set enable_extensions_core in args.gn
+# --- Enable extensions core for the Aerium extensions UI
 for outdir in "out/Default" "chromium/src/out/Default"; do
-  if [ -f "$outdir/args.gn" ]; then
-    if ! grep -q "enable_extensions_core" "$outdir/args.gn"; then
-      echo "enable_extensions_core = true" >> "$outdir/args.gn"
-      echo "[aerium] Set enable_extensions_core = true in $outdir/args.gn"
-    fi
+  ARGS="$outdir/args.gn"
+  if [ -f "$ARGS" ]; then
+    # Fix any previously concatenated line
+    sed -i 's/falseenable_extensions_core/false\nenable_extensions_core/g' "$ARGS" 2>/dev/null || true
+    # Ensure args.gn has a trailing newline before appending
+    [ -n "$(tail -c1 "$ARGS")" ] && echo >> "$ARGS"
+    # Remove existing enable_extensions_core if present, then append cleanly
+    sed -i "/^enable_extensions_core *=/d" "$ARGS"
+    echo "enable_extensions_core = true" >> "$ARGS"
+    echo "[aerium] args.gn extensions lines:"
+    grep -n "extensions" "$ARGS" || true
   fi
 done
 
