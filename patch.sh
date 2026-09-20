@@ -309,7 +309,7 @@ for root, _, files in os.walk('.'):
             print(f"Error patching chrome_otp_phish_guard_delegate.cc: {e}")
 EOF
 
-# --- Clean args.gn of experimental flags that break Clank GN
+# --- Clean args.gn to avoid invalid GN assertions on Android
 for outdir in "out/Default" "chromium/src/out/Default"; do
   ARGS="$outdir/args.gn"
   if [ -f "$ARGS" ]; then
@@ -385,6 +385,28 @@ find . -path "*/obj/chrome/browser/ui/webui/configs/chrome_web_ui_configs.o" -de
 echo "=== VERIFY CHROME_WEB_UI_CONFIGS.CC ==="
 grep -n -C 2 "aerium_extensions" chrome/browser/ui/webui/chrome_web_ui_configs.cc 2>/dev/null || true
 echo "======================================="
+
+# --- Fix enterprise_util.cc when safe_browsing_mode = 0
+echo "==> Patching enterprise_util.cc for safe_browsing_mode=0..."
+python3 - << 'EOF' || true
+import os
+for root, _, files in os.walk('.'):
+    if "enterprise_util.cc" in files:
+        p = os.path.join(root, "enterprise_util.cc")
+        try:
+            with open(p, "r", encoding="utf-8") as f:
+                c = f.read()
+            target = "prefs->GetBoolean(prefs::kSafeBrowsingProceedAnywayDisabled)"
+            if target in c:
+                c = c.replace(target, "false /* safe_browsing_proceed_anyway_disabled */")
+                with open(p, "w", encoding="utf-8") as f:
+                    f.write(c)
+                print(f"[aerium] Successfully patched {p}")
+        except Exception as e:
+            print(f"Error patching {p}: {e}")
+EOF
+
+find . -path "*/obj/chrome/browser/interstitials/impl/enterprise_util.o" -delete 2>/dev/null || true
 
 # --- glic_web_client_handler Clean Implementation
 python3 - << 'EOF' || true
@@ -637,23 +659,24 @@ for root, _, files in os.walk('.'):
         print(f"[aerium] Successfully rewrote clean {p}")
 EOF
 
-# --- Early Compilation Diagnostic for BOTH WebUI Configs and GLIC Handler
+# --- Early Compilation Diagnostic for WebUI Configs, GLIC Handler, and Enterprise Util
 for outdir in "out/Default" "chromium/src/out/Default"; do
   if [ -f "$outdir/build.ninja" ]; then
-    echo "==> Running early compilation diagnostic for chrome_web_ui_configs.o and glic_web_client_handler.o in $outdir..."
+    echo "==> Running early compilation diagnostic in $outdir..."
     export PATH="$PATH:$GITHUB_WORKSPACE/chromium/depot_tools:$GITHUB_WORKSPACE/depot_tools"
     AUTONINJA_BIN=$(which autoninja 2>/dev/null || find . -name "autoninja" | head -n 1)
     if [ -n "$AUTONINJA_BIN" ]; then
       bash "$AUTONINJA_BIN" -C "$outdir" \
         obj/chrome/browser/ui/webui/configs/chrome_web_ui_configs.o \
-        obj/chrome/browser/glic/impl/glic_web_client_handler.o || {
+        obj/chrome/browser/glic/impl/glic_web_client_handler.o \
+        obj/chrome/browser/interstitials/impl/enterprise_util.o || {
         echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
         echo "[aerium] Diagnostic failed: one or more targets failed to compile."
         echo "Aborting early to prevent waiting through the full build queue."
         echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
         exit 1
       }
-      echo "==> [SUCCESS] Both chrome_web_ui_configs.o and glic_web_client_handler.o compiled successfully!"
+      echo "==> [SUCCESS] All diagnostic targets compiled successfully!"
     fi
     break
   fi
