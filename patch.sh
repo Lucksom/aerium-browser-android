@@ -591,6 +591,22 @@ EOF
 # Delete stale object file for chrome_web_ui_configs.o
 find . -path "*/obj/chrome/browser/ui/webui/configs/chrome_web_ui_configs.o" -delete 2>/dev/null || true
 
+# --- Dump Available GN Extension Args and Current args.gn
+echo "=== AVAILABLE GN EXTENSION ARGS ==="
+for outdir in "out/Default" "chromium/src/out/Default"; do
+  if [ -f "$outdir/build.ninja" ]; then
+    export PATH="$PATH:$GITHUB_WORKSPACE/chromium/depot_tools:$GITHUB_WORKSPACE/depot_tools"
+    GN_BIN=$(which gn 2>/dev/null || find . -name "gn" -type f -executable 2>/dev/null | head -n 1)
+    if [ -n "$GN_BIN" ]; then
+      "$GN_BIN" args "$outdir" --list --short 2>/dev/null | grep -iE "extensions" || true
+    fi
+    echo "=== CURRENT ARGS.GN ==="
+    cat "$outdir/args.gn" 2>/dev/null || true
+    echo "======================="
+    break
+  fi
+done
+
 # --- Early Compilation Diagnostic for BOTH WebUI Configs and GLIC Handler
 for outdir in "out/Default" "chromium/src/out/Default"; do
   if [ -f "$outdir/build.ninja" ]; then
