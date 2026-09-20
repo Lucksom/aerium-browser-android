@@ -414,6 +414,38 @@ EOF
 
 find . -path "*/obj/chrome/browser/interstitials/impl/enterprise_util.o" -delete 2>/dev/null || true
 
+# --- Fix download_target_determiner.cc for Android (guard extension_util.h)
+echo "==> Guarding extension_util in download_target_determiner.cc..."
+python3 - << 'EOF' || true
+import os
+for root, _, files in os.walk('.'):
+    if "download_target_determiner.cc" in files:
+        p = os.path.join(root, "download_target_determiner.cc")
+        try:
+            with open(p, "r", encoding="utf-8") as f:
+                c = f.read()
+
+            target_inc = '#include "extensions/browser/extension_util.h"'
+            if target_inc in c:
+                c = c.replace(
+                    target_inc,
+                    '#if BUILDFLAG(ENABLE_EXTENSIONS)\n#include "extensions/browser/extension_util.h"\n#endif'
+                )
+
+            # Ensure buildflags header is present
+            if '#include "extensions/buildflags/buildflags.h"' not in c:
+                c = '#include "extensions/buildflags/buildflags.h"\n' + c
+
+            with open(p, "w", encoding="utf-8") as f:
+                f.write(c)
+            print(f"[aerium] Successfully guarded extension_util in {p}")
+        except Exception as e:
+            print(f"Error patching {p}: {e}")
+EOF
+
+find . -path "*/obj/chrome/browser/download/impl/download_target_determiner.o" -delete 2>/dev/null || true
+
+
 # --- glic_web_client_handler Clean Implementation
 python3 - << 'EOF' || true
 import os
@@ -675,7 +707,8 @@ for outdir in "out/Default" "chromium/src/out/Default"; do
       bash "$AUTONINJA_BIN" -C "$outdir" \
         obj/chrome/browser/ui/webui/configs/chrome_web_ui_configs.o \
         obj/chrome/browser/glic/impl/glic_web_client_handler.o \
-        obj/chrome/browser/interstitials/impl/enterprise_util.o || {
+        obj/chrome/browser/interstitials/impl/enterprise_util.o \
+        obj/chrome/browser/download/impl/download_target_determiner.o || {
         echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
         echo "[aerium] Diagnostic failed: one or more targets failed to compile."
         echo "Aborting early to prevent waiting through the full build queue."
