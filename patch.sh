@@ -33,6 +33,10 @@ except Exception as e:
     print(f"[aerium] Notice on swap: {e}")
 EOF
 
+# --- Restore any files touched by previous runs and clean JNI cache
+git checkout -- "net/*" "third_party/*" "components/*" 2>/dev/null || true
+rm -rf out/Default/gen/jni_headers 2>/dev/null || true
+
 # --- Wrap apksigner to automatically fall back to a working key if signing fails
 find / -name "apksigner" -type f 2>/dev/null | while read -r apk_tool; do
     if [ -f "$apk_tool" ] && ! grep -q "aerium_fallback" "$apk_tool" 2>/dev/null; then
