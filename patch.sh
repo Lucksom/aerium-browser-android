@@ -309,19 +309,18 @@ for root, _, files in os.walk('.'):
             print(f"Error patching chrome_otp_phish_guard_delegate.cc: {e}")
 EOF
 
-# --- Clean args.gn to avoid invalid GN assertions on Android
+# --- Clean args.gn of experimental flags that break Clank GN
 for outdir in "out/Default" "chromium/src/out/Default"; do
   ARGS="$outdir/args.gn"
   if [ -f "$ARGS" ]; then
     sed -i "/enable_extensions_core/d" "$ARGS" 2>/dev/null || true
     sed -i "/enable_desktop_android_extensions/d" "$ARGS" 2>/dev/null || true
-    # Fix any concatenated line
     sed -i 's/falseenable_extensions_core = true/false/g' "$ARGS" 2>/dev/null || true
     sed -i 's/falseenable_extensions_core/false/g' "$ARGS" 2>/dev/null || true
   fi
 done
 
-# --- Guard aerium_extensions in chrome_web_ui_configs.cc
+# --- Unconditionally guard aerium_extensions in chrome_web_ui_configs.cc
 echo "==> Guarding aerium_extensions in chrome_web_ui_configs.cc..."
 python3 - << 'EOF' || true
 import os
@@ -331,40 +330,61 @@ for root, _, files in os.walk('.'):
         p = os.path.join(root, "chrome_web_ui_configs.cc")
         try:
             with open(p, "r", encoding="utf-8") as f:
-                c = f.read()
+                lines = f.readlines()
 
-            # Ensure buildflags header is present
-            if '#include "extensions/buildflags/buildflags.h"' not in c:
-                c = '#include "extensions/buildflags/buildflags.h"\n' + c
-
-            # Guard aerium_extensions.h include
-            if '#include "chrome/browser/ui/webui/aerium_extensions.h"' in c and '#if BUILDFLAG(ENABLE_EXTENSIONS_CORE)' not in c:
-                c = c.replace(
-                    '#include "chrome/browser/ui/webui/aerium_extensions.h"',
-                    '#if BUILDFLAG(ENABLE_EXTENSIONS_CORE)\n#include "chrome/browser/ui/webui/aerium_extensions.h"\n#endif'
-                )
-
-            # Guard the registration call: map.AddWebUIConfig(std::make_unique<AeriumExtensionsUIConfig>());
-            lines = c.splitlines()
             out = []
+            has_bf_header = False
             for line in lines:
-                if "AeriumExtensionsUIConfig" in line and not line.strip().startswith("#"):
-                    out.append("#if BUILDFLAG(ENABLE_EXTENSIONS_CORE)")
+                if 'extensions/buildflags/buildflags.h' in line:
+                    has_bf_header = True
+                
+                # Replace the include line directly
+                if 'aerium_extensions.h' in line:
+                    out.append('#if BUILDFLAG(ENABLE_EXTENSIONS_CORE)\n')
                     out.append(line)
-                    out.append("#endif")
+                    out.append('#endif\n')
+                # Replace the registration line directly
+                elif 'AeriumExtensionsUIConfig' in line:
+                    out.append('#if BUILDFLAG(ENABLE_EXTENSIONS_CORE)\n')
+                    out.append(line)
+                    out.append('#endif\n')
                 else:
                     out.append(line)
-            c = "\n".join(out) + "\n"
+
+            result = "".join(out)
+            if not has_bf_header:
+                result = '#include "extensions/buildflags/buildflags.h"\n' + result
 
             with open(p, "w", encoding="utf-8") as f:
-                f.write(c)
-            print(f"[aerium] Successfully guarded aerium_extensions in {p}")
+                f.write(result)
+            print(f"[aerium] Rewrote {p} with strict BUILDFLAG(ENABLE_EXTENSIONS_CORE) guards")
+        except Exception as e:
+            print(f"Error: {e}")
+
+    # Also decouple aerium_extensions.h directly
+    if "aerium_extensions.h" in files:
+        hp = os.path.join(root, "aerium_extensions.h")
+        try:
+            with open(hp, "r", encoding="utf-8") as f:
+                hc = f.read()
+            hc = hc.replace(
+                '#include "chrome/browser/extensions/extension_install_prompt.h"',
+                'class ExtensionInstallPrompt;'
+            )
+            with open(hp, "w", encoding="utf-8") as f:
+                f.write(hc)
+            print(f"[aerium] Replaced extension_install_prompt.h in {hp}")
         except Exception as e:
             print(f"Error: {e}")
 EOF
 
-# Invalidate object files so Ninja recompiles with the guard
+# Invalidate object files
 find . -path "*/obj/chrome/browser/ui/webui/configs/chrome_web_ui_configs.o" -delete 2>/dev/null || true
+
+# Verify the exact guarded content in the log
+echo "=== VERIFY CHROME_WEB_UI_CONFIGS.CC ==="
+grep -n -C 2 "aerium_extensions" chrome/browser/ui/webui/chrome_web_ui_configs.cc 2>/dev/null || true
+echo "======================================="
 
 # --- glic_web_client_handler Clean Implementation
 python3 - << 'EOF' || true
