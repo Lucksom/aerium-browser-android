@@ -562,14 +562,19 @@ EOF
 
 find . -path "*/obj/chrome/browser/glic/impl/glic_web_client_handler.o" -delete 2>/dev/null || true
 
-# --- aerium_extensions WebUI Header Decoupling & Diagnostics
-echo "=== EXTENSIONS DIAGNOSTICS ==="
-grep -n "aerium_extensions\|AeriumExtensions" chrome/browser/ui/webui/chrome_web_ui_configs.cc 2>/dev/null || true
-find . -name "aerium_extensions.*" -exec sh -c 'echo "== $1"; sed -n 1,50p "$1"' _ {} \; 2>/dev/null || true
-grep -i extensions out/Default/args.gn 2>/dev/null || true
-echo "=============================="
 
-echo "==> Decoupling aerium_extensions.h from extension_install_prompt.h..."
+# --- Set enable_extensions_core in args.gn
+for outdir in "out/Default" "chromium/src/out/Default"; do
+  if [ -f "$outdir/args.gn" ]; then
+    if ! grep -q "enable_extensions_core" "$outdir/args.gn"; then
+      echo "enable_extensions_core = true" >> "$outdir/args.gn"
+      echo "[aerium] Set enable_extensions_core = true in $outdir/args.gn"
+    fi
+  fi
+done
+
+# --- Decouple heavy installer headers from aerium_extensions.h
+echo "==> Decoupling installer headers from aerium_extensions.h..."
 python3 - << 'EOF' || true
 import os
 for root, _, files in os.walk('.'):
@@ -578,34 +583,23 @@ for root, _, files in os.walk('.'):
         try:
             with open(p, "r", encoding="utf-8") as f:
                 c = f.read()
-            target = '#include "chrome/browser/extensions/extension_install_prompt.h"'
-            if target in c:
-                c = c.replace(target, 'class ExtensionInstallPrompt;')
-                with open(p, "w", encoding="utf-8") as f:
-                    f.write(c)
-                print(f"[aerium] Successfully decoupled {p}")
+            replacements = {
+                '#include "chrome/browser/extensions/extension_install_prompt.h"': 'class ExtensionInstallPrompt;',
+                '#include "extensions/browser/crx_installer.h"': 'namespace extensions { class CrxInstaller; }',
+                '#include "extensions/browser/zipfile_installer.h"': 'namespace extensions { class ZipFileInstaller; }',
+                '#include "chrome/browser/extensions/chrome_zipfile_installer.h"': '',
+            }
+            for old, new in replacements.items():
+                c = c.replace(old, new)
+            with open(p, "w", encoding="utf-8") as f:
+                f.write(c)
+            print(f"[aerium] Decoupled heavy installer headers in {p}")
         except Exception as e:
-            print(f"Error: {e}")
+            print(f"Error patching {p}: {e}")
 EOF
 
-# Delete stale object file for chrome_web_ui_configs.o
+# Invalidate object files so Ninja rebuilds them with new args
 find . -path "*/obj/chrome/browser/ui/webui/configs/chrome_web_ui_configs.o" -delete 2>/dev/null || true
-
-# --- Dump Available GN Extension Args and Current args.gn
-echo "=== AVAILABLE GN EXTENSION ARGS ==="
-for outdir in "out/Default" "chromium/src/out/Default"; do
-  if [ -f "$outdir/build.ninja" ]; then
-    export PATH="$PATH:$GITHUB_WORKSPACE/chromium/depot_tools:$GITHUB_WORKSPACE/depot_tools"
-    GN_BIN=$(which gn 2>/dev/null || find . -name "gn" -type f -executable 2>/dev/null | head -n 1)
-    if [ -n "$GN_BIN" ]; then
-      "$GN_BIN" args "$outdir" --list --short 2>/dev/null | grep -iE "extensions" || true
-    fi
-    echo "=== CURRENT ARGS.GN ==="
-    cat "$outdir/args.gn" 2>/dev/null || true
-    echo "======================="
-    break
-  fi
-done
 
 # --- Early Compilation Diagnostic for BOTH WebUI Configs and GLIC Handler
 for outdir in "out/Default" "chromium/src/out/Default"; do
