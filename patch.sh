@@ -322,6 +322,54 @@ for root, _, files in os.walk('.'):
             print(f"Error patching safe_browsing_bridge.cc: {e}")
 EOF
 
+# --- Inject Safe Browsing linker stubs into safe_browsing_bridge.cc (safe_browsing_mode=0)
+echo "==> Injecting safe_browsing linker stubs into safe_browsing_bridge.cc..."
+python3 - << 'EOF' || true
+import os
+
+stubs = r'''
+// --- Aerium Safe Browsing Linker Stubs v2 ---
+extern "C" {
+  void _ZN13safe_browsing30PasswordReuseControllerAndroid18ShowCheckPasswordsEv() {}
+  void _ZN13safe_browsing30PasswordReuseControllerAndroid11CloseDialogEv() {}
+  void _ZN13safe_browsing30PasswordReuseControllerAndroid12IgnoreDialogEv() {}
+  void _ZN13safe_browsing31SuspiciousSiteControllerAndroid11CloseDialogEN2ui18ModalDialogWrapper14DismissalCauseE() {}
+  void _ZN13safe_browsing31SuspiciousSiteControllerAndroid23OnContinueButtonClickedEv() {}
+  void _ZN13safe_browsing31SuspiciousSiteControllerAndroid20HandleBackNavigationENS_36SuspiciousSiteWarningUserInteractionE() {}
+  void _ZN13safe_browsing31SuspiciousSiteControllerAndroid23OnHelpCenterLinkClickedEv() {}
+  void _ZN13safe_browsing35NotificationContentDetectionUkmUtil42RecordSuspiciousNotificationInteractionUkmEiRK4GURLNSt4__Cr12basic_stringIcNS4_11char_traitsIcEENS4_9allocatorIcEEEEP7Profile() {}
+  void* _ZN13safe_browsing44SafeBrowsingNavigationObserverManagerFactory20GetForBrowserContextEPN7content14BrowserContextE(void*) { return nullptr; }
+  void* _ZN13safe_browsing16FileTypePolicies11GetInstanceEv() { static char dummy[256]; return dummy; }
+  int _ZNK13safe_browsing16FileTypePolicies15UmaValueForFileERKN4base8FilePathE() { return 0; }
+  void _ZN17component_updater43RegisterRealTimeUrlChecksAllowlistComponentEPNS_22ComponentUpdateServiceE() {}
+  void _ZN13safe_browsing24ShowSafeBrowsingSettingsEPN2ui13WindowAndroidENS_19SettingsAccessPointE() {}
+  void _ZN13safe_browsing30ShowAdvancedProtectionSettingsEPN2ui13WindowAndroidE() {}
+
+  // static data members (const int kUserDataKey)
+  extern const int _ZN41ChromePasswordReuseDetectionManagerClient12kUserDataKeyE;
+  const int _ZN41ChromePasswordReuseDetectionManagerClient12kUserDataKeyE = 0;
+  extern const int _ZN13safe_browsing31SuspiciousSiteControllerAndroid12kUserDataKeyE;
+  const int _ZN13safe_browsing31SuspiciousSiteControllerAndroid12kUserDataKeyE = 0;
+}
+'''
+
+for root, _, files in os.walk('.'):
+    if "safe_browsing_bridge.cc" in files:
+        p = os.path.join(root, "safe_browsing_bridge.cc")
+        try:
+            with open(p, "r", encoding="utf-8") as f:
+                c = f.read()
+            if "Aerium Safe Browsing Linker Stubs v2" not in c:
+                c += "\n" + stubs
+                with open(p, "w", encoding="utf-8") as f:
+                    f.write(c)
+                print(f"[aerium] Injected Safe Browsing linker stubs into {p}")
+        except Exception as e:
+            print(f"Error injecting stubs: {e}")
+EOF
+
+find . -path "*/obj/chrome/browser/safe_browsing/android/android/safe_browsing_bridge.o" -delete 2>/dev/null || true
+
 # --- Chrome OTP Phish Guard Checker Client Dummy Class
 echo "==> Defining OtpFillingSafeBrowsingCheckerClient in chrome_otp_phish_guard_delegate.cc..."
 python3 - << 'EOF' || true
