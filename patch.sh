@@ -447,36 +447,41 @@ EOF
 
 find . -path "*/obj/chrome/browser/interstitials/impl/enterprise_util.o" -delete 2>/dev/null || true
 
-# --- Fix download_target_determiner.cc for Android (guard extension_util.h)
-echo "==> Guarding extension_util in download_target_determiner.cc..."
+# --- Fix chrome_download_manager_delegate.cc for safe_browsing_mode=0
+echo "==> Patching chrome_download_manager_delegate.cc for safe_browsing_mode=0..."
 python3 - << 'EOF' || true
 import os
 for root, _, files in os.walk('.'):
-    if "download_target_determiner.cc" in files:
-        p = os.path.join(root, "download_target_determiner.cc")
+    if "chrome_download_manager_delegate.cc" in files:
+        p = os.path.join(root, "chrome_download_manager_delegate.cc")
         try:
             with open(p, "r", encoding="utf-8") as f:
                 c = f.read()
 
-            target_inc = '#include "extensions/browser/extension_util.h"'
-            if target_inc in c:
-                c = c.replace(
-                    target_inc,
-                    '#if BUILDFLAG(ENABLE_EXTENSIONS)\n#include "extensions/browser/extension_util.h"\n#endif'
-                )
+            # Mark IsForceSaveToCloud as [[maybe_unused]] to prevent unused-function error
+            c = c.replace(
+                "bool IsForceSaveToCloud(",
+                "[[maybe_unused]] bool IsForceSaveToCloud("
+            )
 
-            # Ensure buildflags header is present
-            if '#include "extensions/buildflags/buildflags.h"' not in c:
-                c = '#include "extensions/buildflags/buildflags.h"\n' + c
+            target = "auto settings = safe_browsing::ShouldUploadBinaryForDeepScanning(item);"
+            if target in c:
+                c = c.replace(target, "std::optional<enterprise_connectors::AnalysisSettings> settings = std::nullopt;")
+            else:
+                c = c.replace(
+                    "safe_browsing::ShouldUploadBinaryForDeepScanning(item)",
+                    "std::nullopt"
+                )
 
             with open(p, "w", encoding="utf-8") as f:
                 f.write(c)
-            print(f"[aerium] Successfully guarded extension_util in {p}")
+            print(f"[aerium] Successfully patched {p}")
         except Exception as e:
             print(f"Error patching {p}: {e}")
 EOF
 
-find . -path "*/obj/chrome/browser/download/impl/download_target_determiner.o" -delete 2>/dev/null || true
+find . -path "*/obj/chrome/browser/download/impl/chrome_download_manager_delegate.o" -delete 2>/dev/null || true
+
 
 # --- Fix chrome_download_manager_delegate.cc for safe_browsing_mode=0
 echo "==> Patching chrome_download_manager_delegate.cc for safe_browsing_mode=0..."
