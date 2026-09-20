@@ -1,7 +1,22 @@
 #!/bin/bash
 
-# --- Prevent JVM OOM during final_dex / R8
-export _JAVA_OPTIONS="-Xmx7g -Xms1g -XX:+UseG1GC -XX:MinHeapFreeRatio=20 -XX:MaxHeapFreeRatio=40"
+# --- Unset Java options to prevent JVM printing to stderr
+unset _JAVA_OPTIONS 2>/dev/null || true
+
+# --- Add Extra 6GB Swapfile to safely handle final_dex / R8 memory without OOM
+python3 - << 'EOF' || true
+import os, subprocess
+try:
+    swaps = subprocess.check_output(["swapon", "--show"], text=True)
+    if "swapfile_extra" not in swaps:
+        swap_path = "/home/runner/work/aerium-browser-android/aerium-browser-android/chromium/swapfile_extra"
+        subprocess.run(f"sudo fallocate -l 6G {swap_path} && sudo chmod 600 {swap_path} && sudo mkswap {swap_path} && sudo swapon {swap_path}", shell=True)
+        print("[aerium] Successfully created 6GB extra swapfile to prevent OOM")
+    else:
+        print("[aerium] 6GB swapfile already active")
+except Exception as e:
+    print(f"[aerium] Notice on swap: {e}")
+EOF
 
 # --- Add Extra Swapfile if available space on /dev/mapper/buildvg-buildlv
 python3 - << 'EOF' || true
