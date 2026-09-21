@@ -262,10 +262,10 @@ fi
 echo "==> Fixing RESTART_SNACKBAR_DURATION_MS in AeriumBackupFragment..."
 find . -name "AeriumBackupFragment.java" -exec sed -i 's/RESTART_SNACKBAR_DURATION_MS/6000/g' {} + 2>/dev/null || true
 
-# --- Vertical Stack Tab Switcher Direct Setup
-echo "==> Setting up Vertical Tab Switcher..."
+# --- Complete Vertical Tab Switcher (Kiwi-style 3D Stack) Setup
+echo "==> Setting up Complete Vertical Tab Switcher..."
 python3 - << 'EOF' || true
-import os
+import os, re
 
 # 1. ChromePreferenceKeys.java
 pref_path = "chrome/browser/preferences/android/java/src/org/chromium/chrome/browser/preferences/ChromePreferenceKeys.java"
@@ -309,7 +309,23 @@ if os.path.exists(tabui_path):
                 f.write(c)
             print("[aerium] Patched TabUiFeatureUtilities.java")
 
-# 3. tabs_settings_preferences.xml
+# 3. TabModelFilterProvider.java (Defensively placed after package)
+filter_path = "chrome/android/java/src/org/chromium/chrome/browser/tabmodel/TabModelFilterProvider.java"
+target_filter = "public TabModelFilter getTabModelFilter(boolean isIncognito) {"
+if os.path.exists(tabui_path) and os.path.exists(filter_path):
+    with open(filter_path, "r") as f:
+        c = f.read()
+    if ("isStackTabSwitcherSelected" not in c and target_filter in c
+            and "mEmptyNormalTabModelFilter" in c and "mEmptyIncognitoTabModelFilter" in c):
+        c = re.sub(r'(^package [^;]+;\n)',
+                   r'\1\nimport org.chromium.chrome.browser.tasks.tab_management.TabUiFeatureUtilities;\n',
+                   c, count=1, flags=re.M)
+        c = c.replace(target_filter, target_filter + "\n        if (TabUiFeatureUtilities.isStackTabSwitcherSelected()) {\n            return isIncognito ? mEmptyIncognitoTabModelFilter : mEmptyNormalTabModelFilter;\n        }", 1)
+        with open(filter_path, "w") as f:
+            f.write(c)
+        print("[aerium] Patched TabModelFilterProvider.java")
+
+# 4. tabs_settings_preferences.xml
 xml_path = "chrome/android/java/res/xml/tabs_settings_preferences.xml"
 if os.path.exists(xml_path):
     with open(xml_path, "r") as f:
@@ -331,7 +347,7 @@ if os.path.exists(xml_path):
             f.write(c)
         print("[aerium] Patched tabs_settings_preferences.xml")
 
-# 4. arrays.xml
+# 5. arrays.xml
 arr_path = "chrome/android/java/res/values/arrays.xml"
 if os.path.exists(arr_path):
     with open(arr_path, "r") as f:
@@ -354,7 +370,7 @@ if os.path.exists(arr_path):
                 f.write(c)
             print("[aerium] Patched arrays.xml")
 
-# 5. android_chrome_strings.grd (Clean, no duplicate strings)
+# 6. android_chrome_strings.grd (Clean, no duplicate strings)
 grd_path = "chrome/browser/ui/android/strings/android_chrome_strings.grd"
 if os.path.exists(grd_path):
     with open(grd_path, "r") as f:
@@ -397,7 +413,7 @@ if os.path.exists(grd_path):
                 f.write(c)
             print("[aerium] Patched android_chrome_strings.grd")
 
-# 6. TabsSettingsFragment.java
+# 7. TabsSettingsFragment.java
 frag_path = "chrome/android/java/src/org/chromium/chrome/browser/settings/TabsSettingsFragment.java"
 if os.path.exists(frag_path):
     with open(frag_path, "r") as f:
@@ -501,7 +517,7 @@ for root, _, files in os.walk('.'):
                 c = f.read()
             c = c.replace("reinterpret_cast<SafeBrowsingServiceInterface*>", "static_cast<SafeBrowsingServiceInterface*>")
             c = c.replace("reinterpret_cast<safe_browsing::SafeBrowsingServiceInterface*>", "static_cast<safe_browsing::SafeBrowsingServiceInterface*>")
-            c = c.replace("g_browser_process->safe_browsing_service()", "nullptr")
+            c = g_browser_process = c.replace("g_browser_process->safe_browsing_service()", "nullptr")
             with open(p, "w", encoding="utf-8") as f:
                 f.write(c)
             print(f"[aerium] Successfully patched safe_browsing_bridge.cc in {p}")
@@ -589,71 +605,23 @@ for outdir in "out/Default" "chromium/src/out/Default"; do
   fi
 done
 
-# --- Unconditionally guard aerium_extensions in chrome_web_ui_configs.cc
-echo "==> Guarding aerium_extensions in chrome_web_ui_configs.cc..."
+# --- Ensure aerium_extensions.h include is clean
 python3 - << 'EOF' || true
 import os
-
 for root, _, files in os.walk('.'):
-    if "chrome_web_ui_configs.cc" in files:
-        p = os.path.join(root, "chrome_web_ui_configs.cc")
-        try:
-            with open(p, "r", encoding="utf-8") as f:
-                lines = f.readlines()
-
-            out = []
-            has_bf_header = False
-            for line in lines:
-                if 'extensions/buildflags/buildflags.h' in line:
-                    has_bf_header = True
-                
-                # Replace the include line directly
-                if 'aerium_extensions.h' in line:
-                    out.append('#if BUILDFLAG(ENABLE_EXTENSIONS_CORE)\n')
-                    out.append(line)
-                    out.append('#endif\n')
-                # Replace the registration line directly
-                elif 'AeriumExtensionsUIConfig' in line:
-                    out.append('#if BUILDFLAG(ENABLE_EXTENSIONS_CORE)\n')
-                    out.append(line)
-                    out.append('#endif\n')
-                else:
-                    out.append(line)
-
-            result = "".join(out)
-            if not has_bf_header:
-                result = '#include "extensions/buildflags/buildflags.h"\n' + result
-
-            with open(p, "w", encoding="utf-8") as f:
-                f.write(result)
-            print(f"[aerium] Rewrote {p} with strict BUILDFLAG(ENABLE_EXTENSIONS_CORE) guards")
-        except Exception as e:
-            print(f"Error: {e}")
-
-    # Also decouple aerium_extensions.h directly
     if "aerium_extensions.h" in files:
         hp = os.path.join(root, "aerium_extensions.h")
         try:
             with open(hp, "r", encoding="utf-8") as f:
                 hc = f.read()
-            hc = hc.replace(
-                '#include "chrome/browser/extensions/extension_install_prompt.h"',
-                'class ExtensionInstallPrompt;'
-            )
-            with open(hp, "w", encoding="utf-8") as f:
-                f.write(hc)
-            print(f"[aerium] Replaced extension_install_prompt.h in {hp}")
+            if "class ExtensionInstallPrompt;" in hc:
+                hc = hc.replace("class ExtensionInstallPrompt;", '#include "chrome/browser/extensions/extension_install_prompt.h"')
+                with open(hp, "w", encoding="utf-8") as f:
+                    f.write(hc)
+                print(f"[aerium] Restored extension_install_prompt.h in {hp}")
         except Exception as e:
             print(f"Error: {e}")
 EOF
-
-# Invalidate object files
-find . -path "*/obj/chrome/browser/ui/webui/configs/chrome_web_ui_configs.o" -delete 2>/dev/null || true
-
-# Verify the exact guarded content in the log
-echo "=== VERIFY CHROME_WEB_UI_CONFIGS.CC ==="
-grep -n -C 2 "aerium_extensions" chrome/browser/ui/webui/chrome_web_ui_configs.cc 2>/dev/null || true
-echo "======================================="
 
 # --- Fix enterprise_util.cc when safe_browsing_mode = 0
 echo "==> Patching enterprise_util.cc for safe_browsing_mode=0..."
@@ -665,7 +633,6 @@ for root, _, files in os.walk('.'):
         try:
             with open(p, "r", encoding="utf-8") as f:
                 c = f.read()
-            # Silence unused variable warning for prefs
             if "PrefService* prefs =" in c and "(void)prefs;" not in c:
                 c = c.replace(
                     "PrefService* prefs = Profile::FromBrowserContext(browser_context)->GetPrefs();",
@@ -694,7 +661,6 @@ for root, _, files in os.walk('.'):
             with open(p, "r", encoding="utf-8") as f:
                 c = f.read()
 
-            # Mark IsForceSaveToCloud as [[maybe_unused]] to prevent unused-function error
             c = c.replace(
                 "bool IsForceSaveToCloud(",
                 "[[maybe_unused]] bool IsForceSaveToCloud("
@@ -717,7 +683,6 @@ for root, _, files in os.walk('.'):
 EOF
 
 find . -path "*/obj/chrome/browser/download/impl/chrome_download_manager_delegate.o" -delete 2>/dev/null || true
-
 
 # --- glic_web_client_handler Clean Implementation
 python3 - << 'EOF' || true
@@ -1027,5 +992,8 @@ for root, _, files in os.walk('.'):
         except Exception as e:
             print(f"Error: {e}")
 EOF
+
+# Clean up sed wrapper so build.sh uses standard system sed
+unset -f sed
 
 export PATCHED=1
