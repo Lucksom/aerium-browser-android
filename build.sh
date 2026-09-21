@@ -551,6 +551,10 @@ mkdir -p $SCRIPT_DIR/release
 set_keys
 UNSIGNED_APK="$(find out/Default/apks -name 'Chrome*.apk' | head -n1)"
 sign_apk "$UNSIGNED_APK" "$SCRIPT_DIR/release/aerium-$VERSION-$AERIUM_ABI.apk"
+[ -s "$SCRIPT_DIR/release/aerium-$VERSION-$AERIUM_ABI.apk" ] || { 
+    echo "[aerium] ERROR: signed APK missing at $SCRIPT_DIR/release/aerium-$VERSION-$AERIUM_ABI.apk" >&2
+    exit 1 
+}
 rm -rf $SCRIPT_DIR/keys
 
 # --- Archive what a native crash report needs to symbolise (issue #11).
