@@ -348,6 +348,17 @@ if os.path.exists(tabui_path):
         tabui_has_method = "isStackTabSwitcherSelected" in f.read()
 
 if tabui_has_method and os.path.exists(filter_path):
+    with open(filter_path, "r") as f:
+        c = f.read()
+    if ("isStackTabSwitcherSelected" not in c and target_filter in c
+            and "mEmptyNormalTabModelFilter" in c and "mEmptyIncognitoTabModelFilter" in c):
+        c = re.sub(r'(^package [^;]+;\n)',
+                   r'\1\nimport org.chromium.chrome.browser.tasks.tab_management.TabUiFeatureUtilities;\n',
+                   c, count=1, flags=re.M)
+        c = c.replace(target_filter, target_filter + "\n        if (TabUiFeatureUtilities.isStackTabSwitcherSelected()) {\n            return isIncognito ? mEmptyIncognitoTabModelFilter : mEmptyNormalTabModelFilter;\n        }", 1)
+        with open(filter_path, "w") as f:
+            f.write(c)
+        print("[aerium] Patched TabModelFilterProvider.java")
 
 # 4. tabs_settings_preferences.xml
 xml_path = "chrome/android/java/res/xml/tabs_settings_preferences.xml"
@@ -683,7 +694,7 @@ EOF
 
 
 # ==============================================================================
-# [33.1] GN ASSERTION CHAIN PROBE (DISCOVERY)
+# [33.1] GN ASSERTION CHAIN PROBE (DISCOVERY & AUTO-RELAX)
 # ==============================================================================
 gn_probe() {
   local gn="buildtools/linux64/gn" outdir="out/Default" bak; bak="$(mktemp -d)"
@@ -707,11 +718,13 @@ gn_probe() {
   echo "[probe] asserts that block Android, in order:"
   printf '  %s\n' "${hits[@]}"
   echo "========================================================"
-  ( cd "$bak" && find . -type f | while read -r f; do cp -p "$f" "$OLDPWD/${f#./}"; done )
+  [ "${AERIUM_PROBE_KEEP:-1}" = 1 ] || ( cd "$bak" && find . -type f | while read -r f; do cp -p "$f" "$OLDPWD/${f#./}"; done )
   rm -rf "$bak"
 }
 
 gn_probe
+  
+ 
 
 
 # ==============================================================================
@@ -1100,6 +1113,7 @@ EOF
 # ==============================================================================
 # [40] CLEANUP SED WRAPPER & EXPORT COMPLETE
 # ==============================================================================
-unset -f sed
+unset -f sed 2>/dev/null || true
+unset -f gn_probe 2>/dev/null || true
 
 export PATCHED=1
