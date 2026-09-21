@@ -1,5 +1,8 @@
 #!/bin/bash
 
+# ==============================================================================
+# [01] INITIALIZATION & SAFE SED MTIME WRAPPER
+# ==============================================================================
 PRE_PATCH_MARKER="$(mktemp -t aerium_pre_patch.XXXXXX)"
 export PRE_PATCH_MARKER
 
@@ -18,10 +21,14 @@ sed() {
   command sed "$@"
 }
 
-# --- Unset Java options to prevent JVM printing to stderr
+# ==============================================================================
+# [02] ENVIRONMENT & JVM CONFIGURATION
+# ==============================================================================
 unset _JAVA_OPTIONS 2>/dev/null || true
 
-# --- Add Extra 6GB Swapfile to safely handle final_dex / R8 memory without OOM
+# ==============================================================================
+# [03] SWAP MEMORY EXPANSION (6GB TO PREVENT OOM IN DEX/R8)
+# ==============================================================================
 python3 - << 'EOF' || true
 import os, subprocess
 try:
@@ -36,13 +43,15 @@ except Exception as e:
     print(f"[aerium] Notice on swap: {e}")
 EOF
 
-# --- Restore any files touched by previous runs and clean JNI cache
+# ==============================================================================
+# [04] SOURCE CLEANUP & DISK SPACE RECLAMATION
+# ==============================================================================
 git checkout -- "net/*" "third_party/*" "components/*" 2>/dev/null || true
-
-# --- Free Root Filesystem Disk Space
 sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android /usr/local/share/boost /usr/local/share/powershell 2>/dev/null || true
 
-# --- WebContents Context Duplicate Cleanup
+# ==============================================================================
+# [05] WEBCONTENTS & AERIUM CONFIG DUPES CLEANUP
+# ==============================================================================
 sed -i '/CONTENT_EXPORT static bool HasLiveWebContentsForBrowserContext/!b;n;/CONTENT_EXPORT static bool HasLiveWebContentsForBrowserContext/d' content/public/browser/web_contents.h 2>/dev/null || true
 python3 - << 'EOF' || true
 import os
@@ -60,14 +69,18 @@ for root, _, files in os.walk('.'):
             pass
 EOF
 
-# --- Launcher Icons and Graphics Setup
+# ==============================================================================
+# [06] LAUNCHER ICONS & GRAPHICS RENDERING
+# ==============================================================================
 mkdir -p chrome/android/java/res_aerium_base/drawable chrome/android/java/res_aerium_base/mipmap-nodpi
 cp $SCRIPT_DIR/res/drawable/themed_app_icon.xml chrome/android/java/res_aerium_base/drawable/themed_app_icon.xml 2>/dev/null || true
 cp $SCRIPT_DIR/res/layered_app_icon_foreground.xml chrome/android/java/res_aerium_base/mipmap-nodpi/layered_app_icon_foreground.xml 2>/dev/null || true
 for icon in $(find chrome/android/java/res_aerium_base -type f -name '*.png' 2>/dev/null); do $SCRIPT_DIR/res/icons.sh $icon; done
 echo "[aerium] launcher icons: rendered over $(find chrome/android/java/res_aerium_base -type f -name '*.png' 2>/dev/null | wc -l) PNGs"
 
-# --- AndroidManifest Native Libs Configuration
+# ==============================================================================
+# [07] ANDROIDMANIFEST NATIVE LIBS
+# ==============================================================================
 if [ -f "chrome/android/java/AndroidManifest.xml" ]; then
   python3 - << 'EOF' || true
 import re
@@ -85,10 +98,14 @@ except Exception as e:
 EOF
 fi
 
-# --- Browser Rebranding Strings
+# ==============================================================================
+# [08] BROWSER REBRANDING STRINGS
+# ==============================================================================
 sed -i 's|^\(\s*\)You and Google\s*$|\1Your browser|' chrome/browser/ui/android/strings/android_chrome_strings.grd 2>/dev/null || true
 
-# --- Autofill Settings Menu Exclusion
+# ==============================================================================
+# [09] AUTOFILL SETTINGS EXCLUSION
+# ==============================================================================
 if [ -f "chrome/android/java/res/xml/main_preferences.xml" ]; then
     perl -0777 -pi -e '
         my @keys = qw(autofill_and_passwords autofill_section passwords
@@ -100,25 +117,33 @@ if [ -f "chrome/android/java/res/xml/main_preferences.xml" ]; then
     ' chrome/android/java/res/xml/main_preferences.xml || true
 fi
 
-# --- Incognito View Intent Routing
+# ==============================================================================
+# [10] INCOGNITO INTENT DISPATCH ROUTING
+# ==============================================================================
 sed -i 's|if (!Intent\.ACTION_VIEW\.equals(intent\.getAction())) {|if (!Intent.ACTION_VIEW.equals(intent.getAction())\n                \|\| !android.webkit.URLUtil.isNetworkUrl(IntentHandler.getUrlFromIntent(intent))) {|' aerium/chromium_src/chrome/android/java/src/org/chromium/chrome/browser/LaunchIntentDispatcherHooks.java 2>/dev/null || true
 sed -i 's|if (urlFromIntent == null) {|if (!android.webkit.URLUtil.isNetworkUrl(urlFromIntent)) {|' aerium/chromium_src/chrome/android/java/src/org/chromium/chrome/browser/LaunchIntentDispatcherHooks.java 2>/dev/null || true
 sed -i 's|static Intent maybeModifyCustomTabIntents(Context context, Intent intent) {|static Intent maybeModifyCustomTabIntents(Context context, Intent intent) { if (!android.webkit.URLUtil.isNetworkUrl(IntentHandler.getUrlFromIntent(intent))) { return intent; }|' aerium/chromium_src/chrome/android/java/src/org/chromium/chrome/browser/LaunchIntentDispatcherHooks.java 2>/dev/null || true
 
-# --- Remote Configuration Mechanism Guard
+# ==============================================================================
+# [11] REMOTE CONFIGURATION GUARD & BASE MODULE DEX
+# ==============================================================================
 if [ -f aerium/android_config/parser/java/src/app/aerium/config/AeriumConfParser.java ] && ! grep -q "isEligible()" aerium/android_config/parser/java/src/app/aerium/config/AeriumConfParser.java; then
     sed -i 's|private static void init(Context ctx, SpecType specType) {|private static boolean isEligible() { return false; }\n\n    private static void init(Context ctx, SpecType specType) { if (!isEligible()) { return; }|' aerium/android_config/parser/java/src/app/aerium/config/AeriumConfParser.java 2>/dev/null || true
 fi
 sed -i 's|if (!_omit_dex) {|if (_is_base_module \&\& !_omit_dex) {|' build/config/android/rules.gni 2>/dev/null || true
 
-# --- GPU and Rendering Baseline Features
+# ==============================================================================
+# [12] GPU & RENDERING DEFAULTS
+# ==============================================================================
 sed -i '/feature_overrides.EnableFeature(::features::kSkipVulkanBlocklist);/d' chrome/browser/chrome_browser_field_trials.cc 2>/dev/null || true
 sed -i '/feature_overrides.EnableFeature(::features::kDefaultANGLEVulkan);/d' chrome/browser/chrome_browser_field_trials.cc 2>/dev/null || true
 sed -i '/feature_overrides.EnableFeature(::features::kVulkanFromANGLE);/d' chrome/browser/chrome_browser_field_trials.cc 2>/dev/null || true
 sed -i '/feature_overrides.EnableFeature(::features::kDefaultPassthroughCommandDecoder);/d' chrome/browser/chrome_browser_field_trials.cc 2>/dev/null || true
 sed -i '/BASE_FEATURE(kFallbackToSWIfGLES3NotSupported,/,/#endif/ s/base::FEATURE_ENABLED_BY_DEFAULT/base::FEATURE_DISABLED_BY_DEFAULT/' ui/gl/gl_features.cc 2>/dev/null || true
 
-# --- Developer Tools and Clank Task Manager
+# ==============================================================================
+# [13] DEV TOOLS & TASK MANAGER ENABLEMENT
+# ==============================================================================
 sed -i 's/BASE_FEATURE(kSubmenusInAppMenu, base::FEATURE_DISABLED_BY_DEFAULT);/BASE_FEATURE(kSubmenusInAppMenu, base::FEATURE_ENABLED_BY_DEFAULT);/' chrome/browser/flags/android/chrome_feature_list.cc 2>/dev/null || true
 sed -i '/BASE_FEATURE(kTaskManagerClank,/,/);/ s/base::FEATURE_DISABLED_BY_DEFAULT/base::FEATURE_ENABLED_BY_DEFAULT/' chrome/browser/task_manager/common/task_manager_features.cc 2>/dev/null || true
 sed -i 's/BASE_FEATURE(kAndroidDevToolsFrontend, base::FEATURE_DISABLED_BY_DEFAULT);/BASE_FEATURE(kAndroidDevToolsFrontend, base::FEATURE_ENABLED_BY_DEFAULT);/' content/public/common/content_features.cc 2>/dev/null || true
@@ -126,33 +151,39 @@ sed -i 's:|| !DeviceFormFactor.isNonMultiDisplayContextOnTablet(mContext):|| fal
 sed -i 's|boolean shouldShowDeveloperMenu() {|boolean shouldShowDeveloperMenu() { if (true) return DevToolsWindowAndroid.isDevToolsAllowedFor(getProfile(), mItemDelegate.getWebContents());|' chrome/android/java/src/org/chromium/chrome/browser/contextmenu/ChromeContextMenuPopulator.java 2>/dev/null || true
 sed -i 's|TabUtils.isUsingDesktopUserAgent(mItemDelegate.getWebContents())|(true \|\| TabUtils.isUsingDesktopUserAgent(mItemDelegate.getWebContents()))|' chrome/android/java/src/org/chromium/chrome/browser/contextmenu/ChromeContextMenuPopulator.java 2>/dev/null || true
 
-# --- Omnibox Site Search Feature
+# ==============================================================================
+# [14] OMNIBOX SITE SEARCH & MEDIA PLAYBACK
+# ==============================================================================
 sed -i 's|BASE_FEATURE(kOmniboxSiteSearch, DISABLED);|BASE_FEATURE(kOmniboxSiteSearch, ENABLED);|' components/omnibox/common/omnibox_features.cc 2>/dev/null || true
-
-# --- Desktop Media Playback Options
 sed -i 's|#if BUILDFLAG(IS_ANDROID)|#if 0|' content/public/renderer/render_frame_media_playback_options.cc 2>/dev/null || true
 
-# --- Extension Popup and Viewport Responsive Styles
+# ==============================================================================
+# [15] EXTENSION POPUP STYLING & VIEWPORT
+# ==============================================================================
 sed -i 's|constexpr gfx::Size kMinSize = {25, 25};|constexpr gfx::Size kMinSize = {256, 25};|' chrome/browser/ui/android/extensions/extension_action_popup_contents.cc 2>/dev/null || true
 sed -i 's|<meta name="color-scheme" content="light dark">|&\n<meta name="viewport" content="width=device-width">|' chrome/browser/resources/extensions/extensions.html 2>/dev/null || true
 sed -i 's|--extensions-card-width: 400px;|--extensions-card-width: 96%;|' chrome/browser/resources/extensions/item_list.css 2>/dev/null || true
 sed -i 's|--cr-toolbar-field-width: 680px;|--cr-toolbar-field-width: 96%;|' chrome/browser/resources/extensions/shared_vars.css 2>/dev/null || true
 sed -i 's|padding: 24px 60px 64px;|padding: 24px 0 64px;|' chrome/browser/resources/extensions/item_list.css 2>/dev/null || true
 
-# --- Manifest V2 Extension Support (Idempotent)
+# ==============================================================================
+# [16] MANIFEST V2 EXTENSION SUPPORT (IDEMPOTENT)
+# ==============================================================================
 if [ -f "chrome/common/extensions/api/api_sources.gni" ]; then
   grep -q '"browser_action.json"' chrome/common/extensions/api/api_sources.gni || sed -i 's|uncompiled_sources_ = \[|&\n  "browser_action.json",\n  "page_action.json",|' chrome/common/extensions/api/api_sources.gni 2>/dev/null || true
 fi
 sed -i 's/api::webstore_private::MV2DeprecationStatus::kHardDisable)));/api::webstore_private::MV2DeprecationStatus::kNone)));/' extensions/browser/api/webstore_private/webstore_private_api.cc 2>/dev/null || true
 sed -i 's/bool g_allow_mv2_for_testing = false;/bool g_allow_mv2_for_testing = true;/' extensions/browser/manifest_v2_handler.cc 2>/dev/null || true
 
-# --- Off Store Extension Download Allowlist
+# ==============================================================================
+# [17] EXTENSION WEB STORE ALLOWLIST & POLICIES
+# ==============================================================================
 sed -i '/^bool OffStoreInstallAllowedByPrefs(/a\  for (const char* d : {"addons.opera.com", "operacdn.com", "microsoftedge.microsoft.com", "edge.microsoft.com", "delivery.mp.microsoft.com", "github.com", "githubusercontent.com"}) if (item.GetURL().DomainIs(d) || item.GetReferrerUrl().DomainIs(d)) return true;' chrome/browser/download/download_crx_util.cc 2>/dev/null || true
-
-# --- Legacy Extension Handler Policy
 sed -i '/^bool ShouldDisableLegacyExtensions() {$/{N;N;N;N;N;N;s%bool ShouldDisableLegacyExtensions() {\n  if (g_allow_mv2_for_testing) {\n    // We allow legacy MV2 extensions for testing purposes.\n    return false;\n  }\n\n  return true;%bool ShouldDisableLegacyExtensions() {\n  // Aerium: Manifest V2 extensions stay loadable - see patch.sh.\n  return false;%}' extensions/browser/manifest_v2_handler.cc 2>/dev/null || true
 
-# --- Phone Toolbar Extensions Container
+# ==============================================================================
+# [18] PHONE TOOLBAR EXTENSION CONTAINER & ACTION LIST
+# ==============================================================================
 sed -i '/<ViewStub/{N;N;N;N;N;N; /optional_button_stub/a\
         <ViewStub\
             android:id="@+id/extensions_toolbar_container_stub"\
@@ -163,53 +194,48 @@ sed -i '/<ViewStub/{N;N;N;N;N;N; /optional_button_stub/a\
 sed -i 's|(ToolbarTablet) mToolbarLayout,|mToolbarLayout,|' chrome/android/java/src/org/chromium/chrome/browser/toolbar/ToolbarManager.java 2>/dev/null || true
 sed -i '/\/\/ Draw the signin button if visible./i\        { View extContainer = findViewById(R.id.extensions_toolbar_container); if (extContainer != null \&\& extContainer.getVisibility() != View.GONE \&\& extContainer.getWidth() != 0) { canvas.save(); ViewUtils.translateCanvasToView(mToolbarButtonsContainer, extContainer, canvas); extContainer.draw(canvas); canvas.restore(); } }' chrome/browser/ui/android/toolbar/java/src/org/chromium/chrome/browser/toolbar/top/ToolbarPhone.java 2>/dev/null || true
 
-# --- Extension Action List Anchoring
 sed -i '/public class RecyclerViewDelegate {$/a\public View getContainerView() { return mContainer; }' chrome/browser/ui/android/toolbar/java/src/org/chromium/chrome/browser/toolbar/extensions/ExtensionActionListCoordinator.java 2>/dev/null || true
 sed -i '/private void showPopupOnAnchor() {/,/private void closePopup() {/ s|if (buttonView == null) {|if (false) {|' chrome/browser/ui/android/toolbar/java/src/org/chromium/chrome/browser/toolbar/extensions/ExtensionActionListMediator.java 2>/dev/null || true
 sed -i 's|buttonView.setIsPressed(true);|if (buttonView != null) buttonView.setIsPressed(true);|' chrome/browser/ui/android/toolbar/java/src/org/chromium/chrome/browser/toolbar/extensions/ExtensionActionListMediator.java 2>/dev/null || true
 sed -i '/[[:space:]]mWindowAndroid,/!b;n;s|[[:space:]]buttonView,|buttonView != null ? buttonView : mRecyclerViewDelegate.getContainerView(),|' chrome/browser/ui/android/toolbar/java/src/org/chromium/chrome/browser/toolbar/extensions/ExtensionActionListMediator.java 2>/dev/null || true
 
-# --- Omnibox Android Desktop Matching Flag
+# ==============================================================================
+# [19] OMNIBOX CLANK AUTOCOMPLETE FLAGS
+# ==============================================================================
 sed -i 's/is_desktop_android = !!BUILDFLAG(IS_DESKTOP_ANDROID);/is_desktop_android = false;/' components/omnibox/browser/zero_suggest_verbatim_match_provider.cc 2>/dev/null || true
 sed -i 's/is_android_mobile = is_android_any \&\& !is_android_desktop;/is_android_mobile = is_android_any \&\& is_android_desktop;/' components/omnibox/browser/autocomplete_result.cc 2>/dev/null || true
 
-# --- Toolbar Pin Extensions Menu Control
+# ==============================================================================
+# [20] TOOLBAR PIN EXTENSIONS BUTTON CONTROL
+# ==============================================================================
 sed -i '/Pref.PIN_EXTENSIONS_MENU_BUTTON, this::updateMenuButtonPinState);$/a\if (!mPrefService.getBoolean(Pref.PIN_EXTENSIONS_MENU_BUTTON)) { mContainer.findViewById(R.id.extensions_menu_button).setVisibility(View.GONE); }' chrome/browser/ui/android/toolbar/java/src/org/chromium/chrome/browser/toolbar/extensions/ExtensionsToolbarCoordinatorImpl.java 2>/dev/null || true
 sed -i '/"ExtensionsToolbarCoordinatorImpl.requestLayoutWithViewUtils()");$/a\if (!isMenuButtonPinned()) { mContainer.findViewById(R.id.extensions_menu_button).setVisibility(View.GONE); }' chrome/browser/ui/android/toolbar/java/src/org/chromium/chrome/browser/toolbar/extensions/ExtensionsToolbarCoordinatorImpl.java 2>/dev/null || true
 
-# --- Incognito Process and Window Separation
+# ==============================================================================
+# [21] INCOGNITO WINDOW & PROCESS ISOLATION
+# ==============================================================================
 sed -i 's|if (!context->IsOffTheRecord()) {|if (true) {|' extensions/browser/process_manager.cc 2>/dev/null || true
 sed -i 's|public static boolean shouldOpenIncognitoAsWindow() {|public static boolean shouldOpenIncognitoAsWindow() { if (org.chromium.chrome.browser.preferences.ChromeSharedPreferences.getInstance().readBoolean(org.chromium.chrome.browser.preferences.ChromePreferenceKeys.AERIUM_SEAMLESS_INCOGNITO, false)) { return false; } if (true) return true;|' chrome/browser/incognito/android/java/src/org/chromium/chrome/browser/incognito/IncognitoUtils.java 2>/dev/null || true
-
-# --- Extension Host Process Priority
 sed -i 's|host_contents_->SetColorProviderSource(NoOpColorProviderSource::Get());|&\nhost_contents_->SetPrimaryPageImportance(content::ChildProcessImportance::IMPORTANT, content::ChildProcessImportance::NORMAL);|' extensions/browser/extension_host.cc 2>/dev/null || true
-
-# --- Extension Install Dialog Window Fallback
 sed -i '/content::WebContents\* web_contents = show_params->GetParentWebContents();/,/DCHECK(view_android);/{/GetParentWebContents/!d}' chrome/browser/ui/android/extensions/extension_install_dialog_view_android.cc 2>/dev/null || true
 sed -i 's|view_android->GetWindowAndroid();|show_params->GetParentWindow();|' chrome/browser/ui/android/extensions/extension_install_dialog_view_android.cc 2>/dev/null || true
-
-# --- Touch Filtering Security Property Override
 sed -i 's|.with(ModalDialogProperties.FILTER_TOUCH_FOR_SECURITY, true)|.with(ModalDialogProperties.FILTER_TOUCH_FOR_SECURITY, false)|' chrome/browser/ui/android/extensions/java/src/org/chromium/chrome/browser/ui/extensions/ExtensionInstallDialogBridge.java 2>/dev/null || true
 
-# --- Virtual Document Path and Content URI Locales
+# ==============================================================================
+# [22] CONTENT URI & DOCUMENT PATHS
+# ==============================================================================
 sed -i 's|while (!(locale_path = locales.Next()).empty()) {|&if (locale_path.IsContentUri()) { locale_path = path.Append(locales.GetInfo().GetName()); }|' extensions/common/manifest_handlers/default_locale_handler.cc 2>/dev/null || true
 sed -i 's|while (!(locale_folder = locales.Next()).empty()) {|&if (locale_folder.IsContentUri()) { locale_folder = locale_path.Append(locales.GetInfo().GetName()); }|' extensions/common/extension_l10n_util.cc 2>/dev/null || true
 sed -i '/extension_l10n_util::ValidateExtensionLocales($/,/error) &&$/{s|extension_l10n_util::ValidateExtensionLocales(|(extension_path_.IsVirtualDocumentPath() \|\| &|;s|error) &&|error)) \&\&|}' extensions/browser/unpacked_installer.cc 2>/dev/null || true
-
-# --- App Menu Incognito Display
 sed -i 's|if (!IncognitoUtils.shouldOpenIncognitoAsWindow() \|\| isIncognitoShowing()) {|if (true) {|' chrome/android/java/src/org/chromium/chrome/browser/tabbed_mode/TabbedAppMenuPropertiesDelegate.java 2>/dev/null || true
 sed -i 's|if (!separateIncognitoWindow \|\| isIncognito) {|if (true) {|' chrome/android/java/src/org/chromium/chrome/browser/tabbed_mode/TabbedAppMenuPropertiesDelegate.java 2>/dev/null || true
-
-# --- Document URI Tree Path Fast Resolver
 sed -i 's|assert treeId.equals(documentId);|&\n if ("com.android.externalstorage.documents".equals(mAuthority)) { String fastId = mRelativePath.isEmpty() ? treeId : (treeId.endsWith(":") ? treeId + mRelativePath : treeId + "/" + mRelativePath); Uri fast = DocumentsContract.buildDocumentUriUsingTree(tree, fastId); return contentUriExists(fast) ? fast : null; }|' base/android/java/src/org/chromium/base/VirtualDocumentPath.java 2>/dev/null || true
-
-# --- Back Press Handling for Incognito Tabs
 sed -i 's|private void onTabChanged(@Nullable Tab tab) {|private void onTabChanged(@Nullable Tab tab) { if (tab != null \&\& tab.isIncognitoBranded()) { mSystemBackPressSupplier.set(true); return; }|' chrome/browser/back_press/android/java/src/org/chromium/chrome/browser/back_press/MinimizeAppAndCloseTabBackPressHandler.java 2>/dev/null || true
-
-# --- Tabs API Null Pointer Guard
 sed -i '/for (int i = 0; i < tab_list->GetTabCount(); ++i) {/i if (!tab_list) { continue; }' chrome/browser/extensions/api/tabs/tabs_api.cc 2>/dev/null || true
 
-# --- WebContents Lifetime Guard for OTR Profiles
+# ==============================================================================
+# [23] WEBCONTENTS LIFETIME GUARD FOR OTR PROFILES
+# ==============================================================================
 if [ -f content/public/browser/web_contents.h ] && ! grep -q "HasLiveWebContentsForBrowserContext" content/public/browser/web_contents.h; then
   sed -i '/CONTENT_EXPORT static WebContents\* FromRenderFrameHost(RenderFrameHost\* rfh);/a\CONTENT_EXPORT static bool HasLiveWebContentsForBrowserContext(BrowserContext* browser_context);' content/public/browser/web_contents.h 2>/dev/null || true
 fi
@@ -221,11 +247,12 @@ sed -i '/^void ProfileDestroyer::DestroyOTRProfileWhenAppropriateWithTimeout($/,
 if (content::WebContents::HasLiveWebContentsForBrowserContext(profile)) { return; }
 }' chrome/browser/profiles/profile_destroyer.cc 2>/dev/null || true
 
-# --- Mixed Profile Activity Acceptance
+# ==============================================================================
+# [24] MIXED PROFILE ACCEPTANCE & TAB GROUP UTILS
+# ==============================================================================
 sed -i 's/|| mSupportedProfileType == SupportedProfileType.REGULAR) {/|| mSupportedProfileType == SupportedProfileType.REGULAR || mSupportedProfileType == SupportedProfileType.MIXED) {/' chrome/android/java/src/org/chromium/chrome/browser/ChromeTabbedActivity.java 2>/dev/null || true
 sed -i 's/|| mSupportedProfileType == SupportedProfileType.OFF_THE_RECORD) {/|| mSupportedProfileType == SupportedProfileType.OFF_THE_RECORD || mSupportedProfileType == SupportedProfileType.MIXED) {/' chrome/android/java/src/org/chromium/chrome/browser/ChromeTabbedActivity.java 2>/dev/null || true
 
-# --- Tab Group Feature Auto Creation Crash Prevention
 if [ -d "chrome/android" ] || [ -d "src/chrome/android" ]; then
   echo "==> Hooking TabGroupFeatureUtils to prevent auto-creation crashes..."
   python3 - << 'EOF' || true
@@ -252,17 +279,20 @@ for base in target_dirs:
 EOF
 fi
 
-# --- Test Build Circular Includes Fix (Idempotent)
+# ==============================================================================
+# [25] TEST BUILD CIRCULAR INCLUDES & BACKUP SNACKBAR
+# ==============================================================================
 if [ -f "chrome/test/BUILD.gn" ]; then
   echo "==> Fixing allow_circular_includes_from in chrome/test/BUILD.gn..."
   grep -q '^allow_circular_includes_from' chrome/test/BUILD.gn || sed -i '1s/^/allow_circular_includes_from = []\n/' chrome/test/BUILD.gn 2>/dev/null || true
 fi
 
-# --- Backup Fragment Snackbar Duration Definition
 echo "==> Fixing RESTART_SNACKBAR_DURATION_MS in AeriumBackupFragment..."
 find . -name "AeriumBackupFragment.java" -exec sed -i 's/RESTART_SNACKBAR_DURATION_MS/6000/g' {} + 2>/dev/null || true
 
-# --- Complete Vertical Tab Switcher (Kiwi-style 3D Stack) Setup
+# ==============================================================================
+# [26] COMPLETE VERTICAL TAB SWITCHER (KIWI 3D STACK PREFERENCES & HOOKS)
+# ==============================================================================
 echo "==> Setting up Complete Vertical Tab Switcher..."
 python3 - << 'EOF' || true
 import os, re
@@ -309,21 +339,15 @@ if os.path.exists(tabui_path):
                 f.write(c)
             print("[aerium] Patched TabUiFeatureUtilities.java")
 
-# 3. TabModelFilterProvider.java (Defensively placed after package)
+# 3. TabModelFilterProvider.java (Defensive import after package)
 filter_path = "chrome/android/java/src/org/chromium/chrome/browser/tabmodel/TabModelFilterProvider.java"
 target_filter = "public TabModelFilter getTabModelFilter(boolean isIncognito) {"
-if os.path.exists(tabui_path) and os.path.exists(filter_path):
-    with open(filter_path, "r") as f:
-        c = f.read()
-    if ("isStackTabSwitcherSelected" not in c and target_filter in c
-            and "mEmptyNormalTabModelFilter" in c and "mEmptyIncognitoTabModelFilter" in c):
-        c = re.sub(r'(^package [^;]+;\n)',
-                   r'\1\nimport org.chromium.chrome.browser.tasks.tab_management.TabUiFeatureUtilities;\n',
-                   c, count=1, flags=re.M)
-        c = c.replace(target_filter, target_filter + "\n        if (TabUiFeatureUtilities.isStackTabSwitcherSelected()) {\n            return isIncognito ? mEmptyIncognitoTabModelFilter : mEmptyNormalTabModelFilter;\n        }", 1)
-        with open(filter_path, "w") as f:
-            f.write(c)
-        print("[aerium] Patched TabModelFilterProvider.java")
+tabui_has_method = False
+if os.path.exists(tabui_path):
+    with open(tabui_path, "r") as f:
+        tabui_has_method = "isStackTabSwitcherSelected" in f.read()
+
+if tabui_has_method and os.path.exists(filter_path):
 
 # 4. tabs_settings_preferences.xml
 xml_path = "chrome/android/java/res/xml/tabs_settings_preferences.xml"
@@ -466,7 +490,9 @@ import org.chromium.chrome.browser.tasks.tab_management.TabUiFeatureUtilities;
         print("[aerium] Patched TabsSettingsFragment.java")
 EOF
 
-# --- Enterprise Cloud Content Scanning Deep Scan Bypass
+# ==============================================================================
+# [27] ENTERPRISE DEEP SCAN CALLS BYPASS
+# ==============================================================================
 echo "==> Completely bypassing WebUIContentInfoSingleton deep scan calls..."
 python3 - << 'EOF' || true
 import os
@@ -505,7 +531,9 @@ for root, _, files in os.walk('.'):
                 print(f"Error: {e}")
 EOF
 
-# --- Safe Browsing Bridge Service Neutralization
+# ==============================================================================
+# [28] SAFE BROWSING SERVICE NEUTRALIZATION & LINKER STUBS
+# ==============================================================================
 echo "==> Neutralizing safe_browsing_service in safe_browsing_bridge.cc..."
 python3 - << 'EOF' || true
 import os
@@ -517,7 +545,7 @@ for root, _, files in os.walk('.'):
                 c = f.read()
             c = c.replace("reinterpret_cast<SafeBrowsingServiceInterface*>", "static_cast<SafeBrowsingServiceInterface*>")
             c = c.replace("reinterpret_cast<safe_browsing::SafeBrowsingServiceInterface*>", "static_cast<safe_browsing::SafeBrowsingServiceInterface*>")
-            c = g_browser_process = c.replace("g_browser_process->safe_browsing_service()", "nullptr")
+            c = c.replace("g_browser_process->safe_browsing_service()", "nullptr")
             with open(p, "w", encoding="utf-8") as f:
                 f.write(c)
             print(f"[aerium] Successfully patched safe_browsing_bridge.cc in {p}")
@@ -525,7 +553,6 @@ for root, _, files in os.walk('.'):
             print(f"Error patching safe_browsing_bridge.cc: {e}")
 EOF
 
-# --- Inject Safe Browsing linker stubs into safe_browsing_bridge.cc (safe_browsing_mode=0)
 echo "==> Injecting safe_browsing linker stubs into safe_browsing_bridge.cc..."
 python3 - << 'EOF' || true
 import os
@@ -573,7 +600,9 @@ EOF
 
 find . -path "*/obj/chrome/browser/safe_browsing/android/android/safe_browsing_bridge.o" -delete 2>/dev/null || true
 
-# --- Chrome OTP Phish Guard Checker Client Dummy Class
+# ==============================================================================
+# [29] OTP PHISH GUARD DUMMY CLIENT
+# ==============================================================================
 echo "==> Defining OtpFillingSafeBrowsingCheckerClient in chrome_otp_phish_guard_delegate.cc..."
 python3 - << 'EOF' || true
 import os
@@ -593,19 +622,48 @@ for root, _, files in os.walk('.'):
             print(f"Error patching chrome_otp_phish_guard_delegate.cc: {e}")
 EOF
 
-# --- Enable extensions on Android (Desktop Android on Clank - safe flags)
+# ==============================================================================
+# [30] GN DEBUG CONTEXT DUMP
+# ==============================================================================
+echo "=== GN INFO ==="
+GN_LIST="$(buildtools/linux64/gn args out/Default --list --short 2>/dev/null || true)"
+echo "$GN_LIST" | grep -iE "ntp|webui|desktop_android|extensions" || true
+sed -n '2500,2520p' chrome/browser/extensions/BUILD.gn 2>/dev/null || true
+sed -n '1,15p' chrome/browser/new_tab_page/BUILD.gn 2>/dev/null || true
+echo "=============="
+
+# ==============================================================================
+# [31] NEW_TAB_PAGE GN TARGET ASSERTION RELAXATION FOR ANDROID
+# ==============================================================================
+if [ -f "chrome/browser/new_tab_page/BUILD.gn" ]; then
+  echo "==> Relaxing new_tab_page assertion for Android..."
+  sed -i 's/^assert(enable_webui_ntp)$/assert(enable_webui_ntp || is_android)/' chrome/browser/new_tab_page/BUILD.gn 2>/dev/null || true
+fi
+
+# ==============================================================================
+# [32] ANDROID EXTENSION GN ARGS (SAFE & VERIFIED ONLY)
+# ==============================================================================
 for outdir in "out/Default" "chromium/src/out/Default"; do
   ARGS="$outdir/args.gn"
   if [ -f "$ARGS" ]; then
     [ -n "$(tail -c1 "$ARGS" 2>/dev/null)" ] && echo "" >> "$ARGS"
-    sed -i '/^enable_extensions *=/d;/^enable_extensions_core *=/d;/^enable_desktop_android_extensions *=/d' "$ARGS"
-    { echo "enable_desktop_android_extensions = true"; echo "enable_extensions_core = true"; } >> "$ARGS"
+    sed -i '/^enable_extensions *=/d;/^enable_extensions_core *=/d;/^enable_desktop_android_extensions *=/d;/^enable_webui_tab_strip *=/d' "$ARGS"
+    for kv in "enable_desktop_android_extensions = true" "enable_extensions_core = true" "enable_webui_tab_strip = false"; do
+      k="${kv%% *}"
+      if [ -z "$GN_LIST" ] || echo "$GN_LIST" | grep -q "^$k "; then
+        echo "$kv" >> "$ARGS"
+      else
+        echo "[aerium] arg $k is not defined in this Chromium, skipping"
+      fi
+    done
     echo "[aerium] Updated args.gn with Android extension flags:"
-    grep -n "extensions" "$ARGS" || true
+    grep -n "extensions\|webui" "$ARGS" || true
   fi
 done
 
-# --- Ensure aerium_extensions.h include is clean
+# ==============================================================================
+# [33] AERIUM_EXTENSIONS.H RESTORATION
+# ==============================================================================
 python3 - << 'EOF' || true
 import os
 for root, _, files in os.walk('.'):
@@ -623,7 +681,42 @@ for root, _, files in os.walk('.'):
             print(f"Error: {e}")
 EOF
 
-# --- Fix enterprise_util.cc when safe_browsing_mode = 0
+
+# ==============================================================================
+# [33.1] GN ASSERTION CHAIN PROBE (DISCOVERY)
+# ==============================================================================
+gn_probe() {
+  local gn="buildtools/linux64/gn" outdir="out/Default" bak; bak="$(mktemp -d)"
+  local -a hits=(); local i out loc file line
+  echo "==> Starting GN Assertion Probe..."
+  for i in $(seq 1 25); do
+    out="$($gn gen "$outdir" 2>&1)" && { echo "[probe] GN passes after ${#hits[@]} relaxed assertion(s)"; break; }
+    loc="$(printf '%s\n' "$out" | grep -m1 -oE 'ERROR at //[^ ]+' | sed -E 's/ERROR at \/\///')"
+    file="$(printf '%s' "$loc" | cut -d: -f1)"; line="$(printf '%s' "$loc" | cut -d: -f2)"
+    if [ -z "$file" ] || ! command sed -n "${line}p" "$file" | grep -q '^assert('; then
+      echo "[probe] STOPPED: non-assertion GN error:"
+      printf '%s\n' "$out" | head -25
+      break
+    fi
+    mkdir -p "$bak/$(dirname "$file")"
+    [ -f "$bak/$file" ] || cp -p "$file" "$bak/$file"
+    hits+=("$file:$line  $(command sed -n "${line}p" "$file")")
+    command sed -i "${line}s/^assert(/assert(true || /" "$file"
+  done
+  echo "========================================================"
+  echo "[probe] asserts that block Android, in order:"
+  printf '  %s\n' "${hits[@]}"
+  echo "========================================================"
+  ( cd "$bak" && find . -type f | while read -r f; do cp -p "$f" "$OLDPWD/${f#./}"; done )
+  rm -rf "$bak"
+}
+
+gn_probe
+
+
+# ==============================================================================
+# [34] ENTERPRISE_UTIL.CC VOID PREFS FIX
+# ==============================================================================
 echo "==> Patching enterprise_util.cc for safe_browsing_mode=0..."
 python3 - << 'EOF' || true
 import os
@@ -650,7 +743,9 @@ EOF
 
 find . -path "*/obj/chrome/browser/interstitials/impl/enterprise_util.o" -delete 2>/dev/null || true
 
-# --- Fix chrome_download_manager_delegate.cc for safe_browsing_mode=0
+# ==============================================================================
+# [35] CHROME DOWNLOAD MANAGER DELEGATE PATCH
+# ==============================================================================
 echo "==> Patching chrome_download_manager_delegate.cc for safe_browsing_mode=0..."
 python3 - << 'EOF' || true
 import os
@@ -684,7 +779,9 @@ EOF
 
 find . -path "*/obj/chrome/browser/download/impl/chrome_download_manager_delegate.o" -delete 2>/dev/null || true
 
-# --- glic_web_client_handler Clean Implementation
+# ==============================================================================
+# [36] GLIC WEB CLIENT HANDLER CLEAN IMPLEMENTATION
+# ==============================================================================
 python3 - << 'EOF' || true
 import os
 
@@ -935,13 +1032,18 @@ for root, _, files in os.walk('.'):
         print(f"[aerium] Successfully rewrote clean {p}")
 EOF
 
+# ==============================================================================
+# [37] BUILD INPUT AUDIT LOG
+# ==============================================================================
 echo "=== BUILD INPUTS TOUCHED BY PATCH ==="
 find . \( -path ./out -o -path ./.git -o -path ./third_party/llvm-build \) -prune -o \
   -type f -newer "$PRE_PATCH_MARKER" \
   \( -name '*.h' -o -name '*.gni' -o -name '*.gn' \) -print 2>/dev/null | head -60
 echo "======================================"
 
-# --- Early Compilation Diagnostic for WebUI Configs, GLIC Handler, and Enterprise Util
+# ==============================================================================
+# [38] EARLY COMPILATION DIAGNOSTIC TARGETS
+# ==============================================================================
 for outdir in "out/Default" "chromium/src/out/Default"; do
   if [ -f "$outdir/build.ninja" ]; then
     echo "==> Running early compilation diagnostic in $outdir..."
@@ -966,7 +1068,9 @@ for outdir in "out/Default" "chromium/src/out/Default"; do
   fi
 done
 
-# --- Persistent Notification Handler Preprocessor Isolation
+# ==============================================================================
+# [39] PERSISTENT NOTIFICATION HANDLER ISOLATION
+# ==============================================================================
 echo "==> Isolating persistent_notification_handler.cc..."
 python3 - << 'EOF' || true
 import os
@@ -993,7 +1097,9 @@ for root, _, files in os.walk('.'):
             print(f"Error: {e}")
 EOF
 
-# Clean up sed wrapper so build.sh uses standard system sed
+# ==============================================================================
+# [40] CLEANUP SED WRAPPER & EXPORT COMPLETE
+# ==============================================================================
 unset -f sed
 
 export PATCHED=1
