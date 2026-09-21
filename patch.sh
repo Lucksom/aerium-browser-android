@@ -276,28 +276,191 @@ fi
 echo "==> Fixing RESTART_SNACKBAR_DURATION_MS in AeriumBackupFragment..."
 find . -name "AeriumBackupFragment.java" -exec sed -i 's/RESTART_SNACKBAR_DURATION_MS/6000/g' {} + 2>/dev/null || true
 
-# --- Vertical Stack Tab Switcher Patch
-V_PATCH="$SCRIPT_DIR/patches/vertical-tab-switcher.patch"
-if [ ! -f "$V_PATCH" ]; then
-    V_PATCH=$(find "$SCRIPT_DIR" "$GITHUB_WORKSPACE" /home/runner/work . .. -name "vertical-tab-switcher.patch" 2>/dev/null | head -n 1)
-fi
+# --- Vertical Stack Tab Switcher Direct Setup
+echo "==> Setting up Vertical Tab Switcher..."
+python3 - << 'EOF' || true
+import os
 
-if [ -n "$V_PATCH" ] && [ -f "$V_PATCH" ]; then
-    echo "==> Found vertical-tab-switcher.patch at: $V_PATCH"
-    if grep -q "TAB_SWITCHER_TYPE_VERTICAL_STACK" chrome/browser/preferences/android/java/src/org/chromium/chrome/browser/preferences/ChromePreferenceKeys.java 2>/dev/null; then
-        echo "==> [aerium] Vertical Tab Switcher is ALREADY applied in the tree!"
-    else
-        echo "==> [aerium] Applying vertical-tab-switcher.patch to chromium/src..."
-        git apply -p1 --ignore-whitespace --whitespace=nowarn "$V_PATCH" || \
-        patch -p1 --forward --no-backup-if-mismatch < "$V_PATCH" || {
-            echo "==> [WARNING] Standard patch failed, attempting direct force application..."
-            git apply --reject --whitespace=fix "$V_PATCH" || true
+# 1. ChromePreferenceKeys.java
+pref_path = "chrome/browser/preferences/android/java/src/org/chromium/chrome/browser/preferences/ChromePreferenceKeys.java"
+if os.path.exists(pref_path):
+    with open(pref_path, "r") as f:
+        c = f.read()
+    if "TAB_SWITCHER_TYPE" not in c:
+        idx = c.rfind("}")
+        if idx != -1:
+            injection = "\n    public static final String TAB_SWITCHER_TYPE = \"Chrome.Tabs.TabSwitcherType\";\n    public static final int TAB_SWITCHER_TYPE_GRID_GROUPS = 0;\n    public static final int TAB_SWITCHER_TYPE_VERTICAL_STACK = 1;\n}\n"
+            c = c[:idx] + injection
+            with open(pref_path, "w") as f:
+                f.write(c)
+            print("[aerium] Patched ChromePreferenceKeys.java")
+
+# 2. TabUiFeatureUtilities.java
+tabui_path = "chrome/android/java/src/org/chromium/chrome/browser/tasks/tab_management/TabUiFeatureUtilities.java"
+if os.path.exists(tabui_path):
+    with open(tabui_path, "r") as f:
+        c = f.read()
+    if "isStackTabSwitcherSelected" not in c:
+        methods = """
+    public static boolean isStackTabSwitcherSelected() {
+        return ChromeSharedPreferences.getInstance().readInt(
+                ChromePreferenceKeys.TAB_SWITCHER_TYPE,
+                ChromePreferenceKeys.TAB_SWITCHER_TYPE_GRID_GROUPS)
+                == ChromePreferenceKeys.TAB_SWITCHER_TYPE_VERTICAL_STACK;
+    }
+
+    public static int getSelectedTabSwitcherType() {
+        return ChromeSharedPreferences.getInstance().readInt(
+                ChromePreferenceKeys.TAB_SWITCHER_TYPE,
+                ChromePreferenceKeys.TAB_SWITCHER_TYPE_GRID_GROUPS);
+    }
+"""
+        target = "public class TabUiFeatureUtilities {"
+        if target in c:
+            c = c.replace(target, target + methods, 1)
+            # Disable tab groups when stack tab switcher is selected
+            c = c.replace("public static boolean isTabGroupsAndroidEnabled() {", "public static boolean isTabGroupsAndroidEnabled() {\n        if (isStackTabSwitcherSelected()) { return false; }")
+            with open(tabui_path, "w") as f:
+                f.write(c)
+            print("[aerium] Patched TabUiFeatureUtilities.java")
+
+# 3. tabs_settings_preferences.xml
+xml_path = "chrome/android/java/res/xml/tabs_settings_preferences.xml"
+if os.path.exists(xml_path):
+    with open(xml_path, "r") as f:
+        c = f.read()
+    if "tab_switcher_type" not in c:
+        cat = """
+    <PreferenceCategory
+        android:title="@string/tab_switcher_category_title">
+        <ListPreference
+            android:key="tab_switcher_type"
+            android:title="@string/tab_switcher_type_title"
+            android:entries="@array/tab_switcher_type_entries"
+            android:entryValues="@array/tab_switcher_type_values"
+            android:defaultValue="0" />
+    </PreferenceCategory>
+"""
+        c = c.replace("android:title=\"@string/tabs_settings_title\">", "android:title=\"@string/tabs_settings_title\">" + cat, 1)
+        with open(xml_path, "w") as f:
+            f.write(c)
+        print("[aerium] Patched tabs_settings_preferences.xml")
+
+# 4. arrays.xml
+arr_path = "chrome/android/java/res/values/arrays.xml"
+if os.path.exists(arr_path):
+    with open(arr_path, "r") as f:
+        c = f.read()
+    if "tab_switcher_type_entries" not in c:
+        arrs = """
+    <string-array name="tab_switcher_type_entries">
+        <item>@string/tab_switcher_option_tab_group</item>
+        <item>@string/tab_switcher_option_vertical_stack</item>
+    </string-array>
+    <string-array name="tab_switcher_type_values">
+        <item>0</item>
+        <item>1</item>
+    </string-array>
+"""
+        idx = c.rfind("</resources>")
+        if idx != -1:
+            c = c[:idx] + arrs + "\n</resources>\n"
+            with open(arr_path, "w") as f:
+                f.write(c)
+            print("[aerium] Patched arrays.xml")
+
+# 5. android_chrome_strings.grd
+grd_path = "chrome/browser/ui/android/strings/android_chrome_strings.grd"
+if os.path.exists(grd_path):
+    with open(grd_path, "r") as f:
+        c = f.read()
+    if "IDS_TAB_SWITCHER_TYPE_TITLE" not in c:
+        msgs = """
+      <message name="IDS_TAB_SWITCHER_CATEGORY_TITLE" desc="Title for tab switcher category">
+        Tab Switcher
+      </message>
+      <message name="IDS_TAB_SWITCHER_TYPE_TITLE" desc="Title for tab switcher type">
+        Tab switcher layout
+      </message>
+      <message name="IDS_TAB_SWITCHER_OPTION_TAB_GROUP" desc="Label for tab group option">
+        Tab group (Default grid)
+      </message>
+      <message name="IDS_TAB_SWITCHER_OPTION_VERTICAL_STACK" desc="Label for vertical stack option">
+        Vertical stack tab switcher
+      </message>
+      <message name="IDS_TAB_SWITCHER_RESTART_TITLE" desc="Title of restart dialog">
+        Relaunch Aerium
+      </message>
+      <message name="IDS_TAB_SWITCHER_RESTART_MESSAGE" desc="Message indicating Aerium needs to restart">
+        Aerium needs to be relaunched to apply the new tab switcher layout.
+      </message>
+      <message name="IDS_RELAUNCH_NOW" desc="Action to restart immediately">
+        Relaunch now
+      </message>
+      <message name="IDS_LATER" desc="Action to restart later">
+        Later
+      </message>
+"""
+        idx = c.rfind("</messages>")
+        if idx != -1:
+            c = c[:idx] + msgs + "\n    </messages>" + c[idx+11:]
+            with open(grd_path, "w") as f:
+                f.write(c)
+            print("[aerium] Patched android_chrome_strings.grd")
+
+# 6. TabsSettingsFragment.java
+frag_path = "chrome/android/java/src/org/chromium/chrome/browser/settings/TabsSettingsFragment.java"
+if os.path.exists(frag_path):
+    with open(frag_path, "r") as f:
+        c = f.read()
+    if "PREF_TAB_SWITCHER_TYPE" not in c:
+        imports = """
+import androidx.appcompat.app.AlertDialog;
+import androidx.preference.ListPreference;
+import org.chromium.chrome.browser.preferences.ChromePreferenceKeys;
+import org.chromium.chrome.browser.preferences.ChromeSharedPreferences;
+import org.chromium.chrome.browser.tasks.tab_management.TabUiFeatureUtilities;
+"""
+        c = c.replace("import androidx.preference.PreferenceFragmentCompat;", "import androidx.preference.PreferenceFragmentCompat;\n" + imports)
+        c = c.replace("implements Preference.OnPreferenceChangeListener {", """implements Preference.OnPreferenceChangeListener {
+    public static final String PREF_TAB_SWITCHER_TYPE = "tab_switcher_type";
+    private ListPreference mTabSwitcherPreference;
+""")
+        hook_init = """
+        mTabSwitcherPreference = (ListPreference) findPreference(PREF_TAB_SWITCHER_TYPE);
+        if (mTabSwitcherPreference != null) {
+            int currentType = TabUiFeatureUtilities.getSelectedTabSwitcherType();
+            mTabSwitcherPreference.setValue(String.valueOf(currentType));
+            mTabSwitcherPreference.setOnPreferenceChangeListener(this);
         }
-        echo "==> [aerium] Finished applying Vertical Tab Switcher patch."
-    fi
-else
-    echo "==> [ERROR] vertical-tab-switcher.patch was NOT found!"
-fi
+"""
+        c = c.replace("getActivity().setTitle(R.string.tabs_settings_title);", "getActivity().setTitle(R.string.tabs_settings_title);\n" + hook_init)
+        
+        pref_change = """
+        if (PREF_TAB_SWITCHER_TYPE.equals(preference.getKey())) {
+            int newType = Integer.parseInt((String) newValue);
+            ChromeSharedPreferences.getInstance().writeInt(
+                    ChromePreferenceKeys.TAB_SWITCHER_TYPE, newType);
+            if (getActivity() != null) {
+                new AlertDialog.Builder(getActivity())
+                        .setTitle(R.string.tab_switcher_restart_title)
+                        .setMessage(R.string.tab_switcher_restart_message)
+                        .setPositiveButton(R.string.relaunch_now, (dialog, which) -> {
+                            getActivity().finishAffinity();
+                            System.exit(0);
+                        })
+                        .setNegativeButton(R.string.later, null)
+                        .show();
+            }
+            return true;
+        }
+"""
+        c = c.replace("public boolean onPreferenceChange(Preference preference, Object newValue) {", "public boolean onPreferenceChange(Preference preference, Object newValue) {\n" + pref_change)
+        with open(frag_path, "w") as f:
+            f.write(c)
+        print("[aerium] Patched TabsSettingsFragment.java")
+EOF
+
 
 
 # --- Enterprise Cloud Content Scanning Deep Scan Bypass
