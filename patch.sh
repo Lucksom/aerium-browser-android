@@ -272,6 +272,12 @@ if [ -f "chrome/test/BUILD.gn" ]; then
   sed -i '1s/^/allow_circular_includes_from = []\n/' chrome/test/BUILD.gn 2>/dev/null || true
 fi
 
+# --- Bypass User Education assertion on Android when extensions are enabled
+if [ -f "chrome/browser/ui/user_education/BUILD.gn" ]; then
+  echo "==> Relaxing user_education assertion for Android..."
+  sed -i 's/assert(is_win || is_mac || is_linux || is_chromeos)/assert(is_win || is_mac || is_linux || is_chromeos || is_android)/' chrome/browser/ui/user_education/BUILD.gn 2>/dev/null || true
+fi
+
 # --- Backup Fragment Snackbar Duration Definition
 echo "==> Fixing RESTART_SNACKBAR_DURATION_MS in AeriumBackupFragment..."
 find . -name "AeriumBackupFragment.java" -exec sed -i 's/RESTART_SNACKBAR_DURATION_MS/6000/g' {} + 2>/dev/null || true
