@@ -1,5 +1,23 @@
 #!/bin/bash
 
+PRE_PATCH_MARKER="$(mktemp -t aerium_pre_patch.XXXXXX)"
+export PRE_PATCH_MARKER
+
+sed() {
+  if [ "$1" = "-i" ]; then
+    shift
+    local f="${!#}"
+    [ -f "$f" ] || return 0
+    local tmp; tmp="$(mktemp)"
+    if command sed "${@:1:$#-1}" "$f" > "$tmp"; then
+      cmp -s "$f" "$tmp" || cat "$tmp" > "$f"
+    fi
+    rm -f "$tmp"
+    return 0
+  fi
+  command sed "$@"
+}
+
 # --- Unset Java options to prevent JVM printing to stderr
 unset _JAVA_OPTIONS 2>/dev/null || true
 
