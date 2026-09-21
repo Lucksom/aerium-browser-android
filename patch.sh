@@ -421,14 +421,12 @@ for root, _, files in os.walk('.'):
             print(f"Error patching chrome_otp_phish_guard_delegate.cc: {e}")
 EOF
 
-# --- Clean args.gn to avoid invalid GN assertions on Android
+# --- Ensure Extensions are enabled in args.gn
 for outdir in "out/Default" "chromium/src/out/Default"; do
   ARGS="$outdir/args.gn"
   if [ -f "$ARGS" ]; then
-    sed -i "/enable_extensions_core/d" "$ARGS" 2>/dev/null || true
-    sed -i "/enable_desktop_android_extensions/d" "$ARGS" 2>/dev/null || true
-    sed -i 's/falseenable_extensions_core = true/false/g' "$ARGS" 2>/dev/null || true
-    sed -i 's/falseenable_extensions_core/false/g' "$ARGS" 2>/dev/null || true
+    grep -q "enable_extensions = true" "$ARGS" || echo "enable_extensions = true" >> "$ARGS"
+    grep -q "enable_extensions_core = true" "$ARGS" || echo "enable_extensions_core = true" >> "$ARGS"
   fi
 done
 
