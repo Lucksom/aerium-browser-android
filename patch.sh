@@ -36,24 +36,8 @@ except Exception as e:
     print(f"[aerium] Notice on swap: {e}")
 EOF
 
-# --- Add Extra Swapfile if available space on /dev/mapper/buildvg-buildlv
-python3 - << 'EOF' || true
-import os, subprocess
-try:
-    # Check if extra swap is already active
-    swaps = subprocess.check_output(["swapon", "--show"], text=True)
-    if "swapfile_extra" not in swaps:
-        swap_path = "/home/runner/work/aerium-browser-android/aerium-browser-android/chromium/swapfile_extra"
-        # Allocate 6GB swap on the build partition (which has 50GB free)
-        subprocess.run(f"sudo fallocate -l 6G {swap_path} && sudo chmod 600 {swap_path} && sudo mkswap {swap_path} && sudo swapon {swap_path}", shell=True)
-        print("[aerium] Successfully created 6GB extra swapfile to prevent OOM")
-except Exception as e:
-    print(f"[aerium] Notice on swap: {e}")
-EOF
-
 # --- Restore any files touched by previous runs and clean JNI cache
 git checkout -- "net/*" "third_party/*" "components/*" 2>/dev/null || true
- 
 
 # --- Free Root Filesystem Disk Space
 sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android /usr/local/share/boost /usr/local/share/powershell 2>/dev/null || true
@@ -155,8 +139,10 @@ sed -i 's|--extensions-card-width: 400px;|--extensions-card-width: 96%;|' chrome
 sed -i 's|--cr-toolbar-field-width: 680px;|--cr-toolbar-field-width: 96%;|' chrome/browser/resources/extensions/shared_vars.css 2>/dev/null || true
 sed -i 's|padding: 24px 60px 64px;|padding: 24px 0 64px;|' chrome/browser/resources/extensions/item_list.css 2>/dev/null || true
 
-# --- Manifest V2 Extension Support
-sed -i 's|uncompiled_sources_ = \[|&\n  "browser_action.json",\n  "page_action.json",|' chrome/common/extensions/api/api_sources.gni 2>/dev/null || true
+# --- Manifest V2 Extension Support (Idempotent)
+if [ -f "chrome/common/extensions/api/api_sources.gni" ]; then
+  grep -q '"browser_action.json"' chrome/common/extensions/api/api_sources.gni || sed -i 's|uncompiled_sources_ = \[|&\n  "browser_action.json",\n  "page_action.json",|' chrome/common/extensions/api/api_sources.gni 2>/dev/null || true
+fi
 sed -i 's/api::webstore_private::MV2DeprecationStatus::kHardDisable)));/api::webstore_private::MV2DeprecationStatus::kNone)));/' extensions/browser/api/webstore_private/webstore_private_api.cc 2>/dev/null || true
 sed -i 's/bool g_allow_mv2_for_testing = false;/bool g_allow_mv2_for_testing = true;/' extensions/browser/manifest_v2_handler.cc 2>/dev/null || true
 
@@ -266,11 +252,10 @@ for base in target_dirs:
 EOF
 fi
 
-# --- Test Build Circular Includes & Desktop Test Isolation
+# --- Test Build Circular Includes Fix (Idempotent)
 if [ -f "chrome/test/BUILD.gn" ]; then
-  echo "==> Isolating desktop extension test targets on Android in chrome/test/BUILD.gn..."
-  sed -i 's/if (enable_extensions) {/if (enable_extensions \&\& !is_android) {/g' chrome/test/BUILD.gn 2>/dev/null || true
-  sed -i '1s/^/allow_circular_includes_from = []\n/' chrome/test/BUILD.gn 2>/dev/null || true
+  echo "==> Fixing allow_circular_includes_from in chrome/test/BUILD.gn..."
+  grep -q '^allow_circular_includes_from' chrome/test/BUILD.gn || sed -i '1s/^/allow_circular_includes_from = []\n/' chrome/test/BUILD.gn 2>/dev/null || true
 fi
 
 # --- Backup Fragment Snackbar Duration Definition
@@ -319,7 +304,6 @@ if os.path.exists(tabui_path):
         target = "public class TabUiFeatureUtilities {"
         if target in c:
             c = c.replace(target, target + methods, 1)
-            # Disable tab groups when stack tab switcher is selected
             c = c.replace("public static boolean isTabGroupsAndroidEnabled() {", "public static boolean isTabGroupsAndroidEnabled() {\n        if (isStackTabSwitcherSelected()) { return false; }")
             with open(tabui_path, "w") as f:
                 f.write(c)
@@ -370,7 +354,7 @@ if os.path.exists(arr_path):
                 f.write(c)
             print("[aerium] Patched arrays.xml")
 
-# 5. android_chrome_strings.grd
+# 5. android_chrome_strings.grd (Clean, no duplicate strings)
 grd_path = "chrome/browser/ui/android/strings/android_chrome_strings.grd"
 if os.path.exists(grd_path):
     with open(grd_path, "r") as f:
@@ -395,10 +379,14 @@ if os.path.exists(grd_path):
       <message name="IDS_TAB_SWITCHER_RESTART_MESSAGE" desc="Message indicating Aerium needs to restart">
         Aerium needs to be relaunched to apply the new tab switcher layout.
       </message>
-      <message name="IDS_RELAUNCH_NOW" desc="Action to restart immediately">
+"""
+        if "IDS_RELAUNCH_NOW" not in c:
+            msgs += """      <message name="IDS_RELAUNCH_NOW" desc="Action to restart immediately">
         Relaunch now
       </message>
-      <message name="IDS_LATER" desc="Action to restart later">
+"""
+        if "IDS_LATER" not in c:
+            msgs += """      <message name="IDS_LATER" desc="Action to restart later">
         Later
       </message>
 """
@@ -461,8 +449,6 @@ import org.chromium.chrome.browser.tasks.tab_management.TabUiFeatureUtilities;
             f.write(c)
         print("[aerium] Patched TabsSettingsFragment.java")
 EOF
-
-
 
 # --- Enterprise Cloud Content Scanning Deep Scan Bypass
 echo "==> Completely bypassing WebUIContentInfoSingleton deep scan calls..."
@@ -591,18 +577,15 @@ for root, _, files in os.walk('.'):
             print(f"Error patching chrome_otp_phish_guard_delegate.cc: {e}")
 EOF
 
-# --- Ensure Extensions are enabled in args.gn with safe newlines
+# --- Enable extensions on Android (Desktop Android on Clank - safe flags)
 for outdir in "out/Default" "chromium/src/out/Default"; do
   ARGS="$outdir/args.gn"
   if [ -f "$ARGS" ]; then
-    sed -i 's/falseenable_extensions/false\nenable_extensions/g' "$ARGS" 2>/dev/null || true
-    if ! grep -q "^enable_extensions = true" "$ARGS"; then
-      echo "" >> "$ARGS"
-      echo "enable_extensions = true" >> "$ARGS"
-    fi
-    if ! grep -q "^enable_extensions_core = true" "$ARGS"; then
-      echo "enable_extensions_core = true" >> "$ARGS"
-    fi
+    [ -n "$(tail -c1 "$ARGS" 2>/dev/null)" ] && echo "" >> "$ARGS"
+    sed -i '/^enable_extensions *=/d;/^enable_extensions_core *=/d;/^enable_desktop_android_extensions *=/d' "$ARGS"
+    { echo "enable_desktop_android_extensions = true"; echo "enable_extensions_core = true"; } >> "$ARGS"
+    echo "[aerium] Updated args.gn with Android extension flags:"
+    grep -n "extensions" "$ARGS" || true
   fi
 done
 
@@ -992,7 +975,6 @@ find . \( -path ./out -o -path ./.git -o -path ./third_party/llvm-build \) -prun
   -type f -newer "$PRE_PATCH_MARKER" \
   \( -name '*.h' -o -name '*.gni' -o -name '*.gn' \) -print 2>/dev/null | head -60
 echo "======================================"
-
 
 # --- Early Compilation Diagnostic for WebUI Configs, GLIC Handler, and Enterprise Util
 for outdir in "out/Default" "chromium/src/out/Default"; do
