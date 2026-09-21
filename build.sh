@@ -15,6 +15,10 @@ source common.sh
 MODE_CI=0
 [ "$1" = "--ci" ] && MODE_CI=1
 
+if [ "$MODE_CI" = 1 ]; then
+    [ -n "${STORE_TEST_JKS:-}" ] || { echo "[aerium] ERROR: STORE_TEST_JKS secret is not set!" >&2; exit 1; }
+fi
+
 # Time budget for this stage, expressed as "job timeout minus what the
 # checkpoint round-trip needs", and measured from when the STAGE started - not
 # from when this script started.
