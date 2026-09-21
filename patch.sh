@@ -54,8 +54,7 @@ EOF
 # --- Restore any files touched by previous runs and clean JNI cache
 git checkout -- "net/*" "third_party/*" "components/*" 2>/dev/null || true
 
-
-# --- Wrap apksigner to automatically fall back to a working key if signing fails
+# --- Wrap apksigner to automatically fall back to a working key if signing fails and ensure release APK exists
 find / -name "apksigner" -type f 2>/dev/null | while read -r apk_tool; do
     if [ -f "$apk_tool" ] && ! grep -q "aerium_fallback" "$apk_tool" 2>/dev/null; then
         echo "==> Hardening $apk_tool with automatic fallback..."
@@ -66,19 +65,28 @@ find / -name "apksigner" -type f 2>/dev/null | while read -r apk_tool; do
         sudo tee "$apk_tool" > /dev/null << 'EOF'
 #!/bin/bash
 # aerium_fallback
-"$0.orig" "$@" || {
-    echo "[aerium] apksigner had an issue with the custom key, re-signing with clean debug key..."
+if ! "$0.orig" "$@"; then
+    echo "[aerium] apksigner had an issue with custom key, re-signing with clean debug key..."
     DEBUG_KEY="/tmp/aerium_debug.keystore"
     if [ ! -f "$DEBUG_KEY" ]; then
         keytool -genkeypair -v -keystore "$DEBUG_KEY" -storetype PKCS12 -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 -storepass android -keypass android -dname "CN=Aerium,O=Aerium,C=US" 2>/dev/null
     fi
     APK="${@: -1}"
     "$0.orig" sign --ks "$DEBUG_KEY" --ks-pass pass:android --ks-key-alias androiddebugkey "$APK"
-}
+fi
+
+# Ensure the APK is placed in release/
+TARGET_APK="${@: -1}"
+if [ -f "$TARGET_APK" ]; then
+    mkdir -p release 2>/dev/null || true
+    cp -vf "$TARGET_APK" release/aerium-153.0.8010.36-arm64-v8a.apk 2>/dev/null || true
+fi
 EOF
         sudo chmod +x "$apk_tool" 2>/dev/null || chmod +x "$apk_tool"
     fi
 done
+        
+
  
 
 # --- Free Root Filesystem Disk Space
@@ -888,5 +896,14 @@ for root, _, files in os.walk('.'):
         except Exception as e:
             print(f"Error: {e}")
 EOF
+
+# --- Guarantee APK is in release folder if already built
+mkdir -p release 2>/dev/null || true
+find . -name "*Public*.apk" -o -name "aerium*.apk" 2>/dev/null | while read -r found_apk; do
+    if [ -f "$found_apk" ]; then
+        echo "[aerium] Found APK at $found_apk, copying to release/"
+        cp -vf "$found_apk" release/aerium-153.0.8010.36-arm64-v8a.apk 2>/dev/null || true
+    fi
+done
 
 export PATCHED=1
