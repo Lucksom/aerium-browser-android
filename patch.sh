@@ -793,6 +793,32 @@ EOF
 find . -path "*/obj/chrome/browser/download/impl/chrome_download_manager_delegate.o" -delete 2>/dev/null || true
 
 # ==============================================================================
+# [35.1] DOWNLOAD TARGET DETERMINER: extensions::util is desktop-only
+# ==============================================================================
+python3 - << 'EOF' || true
+import os
+p = "chrome/browser/download/download_target_determiner.cc"
+if os.path.exists(p):
+    with open(p, "r", encoding="utf-8") as f:
+        c = f.read()
+    old = "!extensions::util::ShouldDownloadAsRegularFile()"
+    marker = "true /* aerium: extension installs enabled */"
+    if old in c:
+        c = c.replace(old, marker)
+        with open(p, "w", encoding="utf-8") as f:
+            f.write(c)
+        print("[aerium] Patched download_target_determiner.cc")
+    lines = c.splitlines()
+    for i, l in enumerate(lines):
+        if marker in l:
+            print("=== download_target_determiner.cc context ===")
+            print("\n".join(lines[max(0, i - 10): i + 12]))
+            print("=============================================")
+            break
+EOF
+find . -path "*/obj/chrome/browser/download/impl/download_target_determiner.o" -delete 2>/dev/null || true
+
+# ==============================================================================
 # [36] GLIC WEB CLIENT HANDLER CLEAN IMPLEMENTATION
 # ==============================================================================
 python3 - << 'EOF' || true
@@ -1063,12 +1089,21 @@ for outdir in "out/Default" "chromium/src/out/Default"; do
     export PATH="$PATH:$GITHUB_WORKSPACE/chromium/depot_tools:$GITHUB_WORKSPACE/depot_tools"
     AUTONINJA_BIN=$(which autoninja 2>/dev/null || find . -name "autoninja" | head -n 1)
     if [ -n "$AUTONINJA_BIN" ]; then
-      bash "$AUTONINJA_BIN" -C "$outdir" \
-        obj/chrome/browser/ui/webui/configs/chrome_web_ui_configs.o \
-        obj/chrome/browser/glic/impl/glic_web_client_handler.o \
-        obj/chrome/browser/interstitials/impl/enterprise_util.o \
-        obj/chrome/browser/download/impl/download_target_determiner.o \
-        obj/chrome/browser/download/impl/chrome_download_manager_delegate.o || {
+      DIAG_TARGETS=(
+        obj/chrome/browser/ui/webui/configs/chrome_web_ui_configs.o
+        obj/chrome/browser/glic/impl/glic_web_client_handler.o
+        obj/chrome/browser/interstitials/impl/enterprise_util.o
+        obj/chrome/browser/download/impl/download_target_determiner.o
+        obj/chrome/browser/download/impl/chrome_download_manager_delegate.o
+      )
+      for t in obj/chrome/browser/download/impl/download_crx_util.o; do
+        if grep -q "^build $t:" "$outdir/toolchain.ninja" 2>/dev/null; then
+          DIAG_TARGETS+=("$t")
+        else
+          echo "[aerium] diagnostic target not found, skipping: $t"
+        fi
+      done
+      bash "$AUTONINJA_BIN" -k 0 -C "$outdir" "${DIAG_TARGETS[@]}" || {
         echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
         echo "[aerium] Diagnostic failed: one or more targets failed to compile."
         echo "Aborting early to prevent waiting through the full build queue."
@@ -1080,6 +1115,7 @@ for outdir in "out/Default" "chromium/src/out/Default"; do
     break
   fi
 done
+  
 
 # ==============================================================================
 # [39] PERSISTENT NOTIFICATION HANDLER ISOLATION
