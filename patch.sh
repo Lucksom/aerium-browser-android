@@ -266,16 +266,11 @@ for base in target_dirs:
 EOF
 fi
 
-# --- Test Build Circular Includes Fix
+# --- Test Build Circular Includes & Desktop Test Isolation
 if [ -f "chrome/test/BUILD.gn" ]; then
-  echo "==> Fixing allow_circular_includes_from in chrome/test/BUILD.gn..."
+  echo "==> Isolating desktop extension test targets on Android in chrome/test/BUILD.gn..."
+  sed -i 's/if (enable_extensions) {/if (enable_extensions \&\& !is_android) {/g' chrome/test/BUILD.gn 2>/dev/null || true
   sed -i '1s/^/allow_circular_includes_from = []\n/' chrome/test/BUILD.gn 2>/dev/null || true
-fi
-
-# --- Bypass User Education assertion on Android when extensions are enabled
-if [ -f "chrome/browser/ui/user_education/BUILD.gn" ]; then
-  echo "==> Relaxing user_education assertion for Android..."
-  sed -i 's/assert(is_win || is_mac || is_linux || is_chromeos)/assert(is_win || is_mac || is_linux || is_chromeos || is_android)/' chrome/browser/ui/user_education/BUILD.gn 2>/dev/null || true
 fi
 
 # --- Backup Fragment Snackbar Duration Definition
