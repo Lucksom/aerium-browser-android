@@ -53,7 +53,7 @@ EOF
 
 # --- Restore any files touched by previous runs and clean JNI cache
 git checkout -- "net/*" "third_party/*" "components/*" 2>/dev/null || true
-rm -rf out/Default/gen/jni_headers 2>/dev/null || true
+
 
 # --- Wrap apksigner to automatically fall back to a working key if signing fails
 find / -name "apksigner" -type f 2>/dev/null | while read -r apk_tool; do
@@ -829,6 +829,13 @@ for root, _, files in os.walk('.'):
             fp.write(code)
         print(f"[aerium] Successfully rewrote clean {p}")
 EOF
+
+echo "=== BUILD INPUTS TOUCHED BY PATCH ==="
+find . \( -path ./out -o -path ./.git -o -path ./third_party/llvm-build \) -prune -o \
+  -type f -newer "$PRE_PATCH_MARKER" \
+  \( -name '*.h' -o -name '*.gni' -o -name '*.gn' \) -print 2>/dev/null | head -60
+echo "======================================"
+
 
 # --- Early Compilation Diagnostic for WebUI Configs, GLIC Handler, and Enterprise Util
 for outdir in "out/Default" "chromium/src/out/Default"; do
