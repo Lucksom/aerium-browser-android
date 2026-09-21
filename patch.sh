@@ -277,12 +277,21 @@ echo "==> Fixing RESTART_SNACKBAR_DURATION_MS in AeriumBackupFragment..."
 find . -name "AeriumBackupFragment.java" -exec sed -i 's/RESTART_SNACKBAR_DURATION_MS/6000/g' {} + 2>/dev/null || true
 
 # --- Vertical Stack Tab Switcher Patch
-PATCH_FILE=$(find "$SCRIPT_DIR" "$GITHUB_WORKSPACE" . .. -name "vertical-tab-switcher.patch" 2>/dev/null | head -n 1)
+PATCH_FILE="$SCRIPT_DIR/patches/vertical-tab-switcher.patch"
+if [ ! -f "$PATCH_FILE" ]; then
+    PATCH_FILE=$(find "$SCRIPT_DIR" "$GITHUB_WORKSPACE" /home/runner/work . .. -name "vertical-tab-switcher.patch" 2>/dev/null | head -n 1)
+fi
+
 if [ -n "$PATCH_FILE" ] && [ -f "$PATCH_FILE" ]; then
-  echo "==> Found patch file at: $PATCH_FILE"
-  git apply --ignore-whitespace --whitespace=nowarn "$PATCH_FILE" 2>/dev/null || \
-  patch -p1 --forward --no-backup-if-mismatch < "$PATCH_FILE" 2>/dev/null || \
-  echo "==> Notice: Patch bypassed or already present"
+    echo "==> Found patch file at: $PATCH_FILE"
+    # Try git apply with -p1, then -p0, then patch command with full output (no silent 2>/dev/null)
+    git apply -p1 --ignore-whitespace --whitespace=nowarn "$PATCH_FILE" || \
+    git apply -p0 --ignore-whitespace --whitespace=nowarn "$PATCH_FILE" || \
+    patch -p1 --forward --no-backup-if-mismatch < "$PATCH_FILE" || \
+    patch -p0 --forward --no-backup-if-mismatch < "$PATCH_FILE" || \
+    echo "==> Notice: Patch could not apply automatically or is already applied"
+else
+    echo "==> ERROR: vertical-tab-switcher.patch file NOT found!"
 fi
 
 # --- Enterprise Cloud Content Scanning Deep Scan Bypass
