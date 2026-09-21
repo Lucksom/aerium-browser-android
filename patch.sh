@@ -277,22 +277,28 @@ echo "==> Fixing RESTART_SNACKBAR_DURATION_MS in AeriumBackupFragment..."
 find . -name "AeriumBackupFragment.java" -exec sed -i 's/RESTART_SNACKBAR_DURATION_MS/6000/g' {} + 2>/dev/null || true
 
 # --- Vertical Stack Tab Switcher Patch
-PATCH_FILE="$SCRIPT_DIR/patches/vertical-tab-switcher.patch"
-if [ ! -f "$PATCH_FILE" ]; then
-    PATCH_FILE=$(find "$SCRIPT_DIR" "$GITHUB_WORKSPACE" /home/runner/work . .. -name "vertical-tab-switcher.patch" 2>/dev/null | head -n 1)
+V_PATCH="$SCRIPT_DIR/patches/vertical-tab-switcher.patch"
+if [ ! -f "$V_PATCH" ]; then
+    V_PATCH=$(find "$SCRIPT_DIR" "$GITHUB_WORKSPACE" /home/runner/work . .. -name "vertical-tab-switcher.patch" 2>/dev/null | head -n 1)
 fi
 
-if [ -n "$PATCH_FILE" ] && [ -f "$PATCH_FILE" ]; then
-    echo "==> Found patch file at: $PATCH_FILE"
-    # Try git apply with -p1, then -p0, then patch command with full output (no silent 2>/dev/null)
-    git apply -p1 --ignore-whitespace --whitespace=nowarn "$PATCH_FILE" || \
-    git apply -p0 --ignore-whitespace --whitespace=nowarn "$PATCH_FILE" || \
-    patch -p1 --forward --no-backup-if-mismatch < "$PATCH_FILE" || \
-    patch -p0 --forward --no-backup-if-mismatch < "$PATCH_FILE" || \
-    echo "==> Notice: Patch could not apply automatically or is already applied"
+if [ -n "$V_PATCH" ] && [ -f "$V_PATCH" ]; then
+    echo "==> Found vertical-tab-switcher.patch at: $V_PATCH"
+    if grep -q "TAB_SWITCHER_TYPE_VERTICAL_STACK" chrome/browser/preferences/android/java/src/org/chromium/chrome/browser/preferences/ChromePreferenceKeys.java 2>/dev/null; then
+        echo "==> [aerium] Vertical Tab Switcher is ALREADY applied in the tree!"
+    else
+        echo "==> [aerium] Applying vertical-tab-switcher.patch to chromium/src..."
+        git apply -p1 --ignore-whitespace --whitespace=nowarn "$V_PATCH" || \
+        patch -p1 --forward --no-backup-if-mismatch < "$V_PATCH" || {
+            echo "==> [WARNING] Standard patch failed, attempting direct force application..."
+            git apply --reject --whitespace=fix "$V_PATCH" || true
+        }
+        echo "==> [aerium] Finished applying Vertical Tab Switcher patch."
+    fi
 else
-    echo "==> ERROR: vertical-tab-switcher.patch file NOT found!"
+    echo "==> [ERROR] vertical-tab-switcher.patch was NOT found!"
 fi
+
 
 # --- Enterprise Cloud Content Scanning Deep Scan Bypass
 echo "==> Completely bypassing WebUIContentInfoSingleton deep scan calls..."
