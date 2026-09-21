@@ -427,12 +427,18 @@ for root, _, files in os.walk('.'):
             print(f"Error patching chrome_otp_phish_guard_delegate.cc: {e}")
 EOF
 
-# --- Ensure Extensions are enabled in args.gn
+# --- Ensure Extensions are enabled in args.gn with safe newlines
 for outdir in "out/Default" "chromium/src/out/Default"; do
   ARGS="$outdir/args.gn"
   if [ -f "$ARGS" ]; then
-    grep -q "enable_extensions = true" "$ARGS" || echo "enable_extensions = true" >> "$ARGS"
-    grep -q "enable_extensions_core = true" "$ARGS" || echo "enable_extensions_core = true" >> "$ARGS"
+    sed -i 's/falseenable_extensions/false\nenable_extensions/g' "$ARGS" 2>/dev/null || true
+    if ! grep -q "^enable_extensions = true" "$ARGS"; then
+      echo "" >> "$ARGS"
+      echo "enable_extensions = true" >> "$ARGS"
+    fi
+    if ! grep -q "^enable_extensions_core = true" "$ARGS"; then
+      echo "enable_extensions_core = true" >> "$ARGS"
+    fi
   fi
 done
 
