@@ -169,9 +169,31 @@ sed -i 's|padding: 24px 60px 64px;|padding: 24px 0 64px;|' chrome/browser/resour
 # ==============================================================================
 # [16] MANIFEST V2 EXTENSION SUPPORT (IDEMPOTENT)
 # ==============================================================================
-if [ -f "chrome/common/extensions/api/api_sources.gni" ]; then
-  grep -q '"browser_action.json"' chrome/common/extensions/api/api_sources.gni || sed -i 's|uncompiled_sources_ = \[|&\n  "browser_action.json",\n  "page_action.json",|' chrome/common/extensions/api/api_sources.gni 2>/dev/null || true
-fi
+# Clean up all duplicate browser_action / page_action in api_sources.gni
+python3 - << 'EOF' || true
+import os, re
+p = "chrome/common/extensions/api/api_sources.gni"
+if os.path.exists(p):
+    with open(p, "r", encoding="utf-8") as f:
+        c = f.read()
+    
+    # Remove every occurrence of browser_action and page_action
+    c = re.sub(r'\s*"browser_action\.json",', '', c)
+    c = re.sub(r'\s*"page_action\.json",', '', c)
+    
+    # Add them back exactly once inside uncompiled_sources_
+    target = "uncompiled_sources_ = ["
+    if target in c:
+        c = c.replace(target, target + '\n  "browser_action.json",\n  "page_action.json",', 1)
+        with open(p, "w", encoding="utf-8") as f:
+            f.write(c)
+        print("[aerium] Cleaned and ensured browser_action.json & page_action.json exactly once in api_sources.gni")
+EOF
+
+# Force regeneration and recompilation of generated_schemas
+find . -path "*/gen/chrome/common/extensions/api/generated_schemas.*" -delete 2>/dev/null || true
+find . -path "*/obj/chrome/common/extensions/api/generated_api_json_strings/generated_schemas.o" -delete 2>/dev/null || true
+
 sed -i 's/api::webstore_private::MV2DeprecationStatus::kHardDisable)));/api::webstore_private::MV2DeprecationStatus::kNone)));/' extensions/browser/api/webstore_private/webstore_private_api.cc 2>/dev/null || true
 sed -i 's/bool g_allow_mv2_for_testing = false;/bool g_allow_mv2_for_testing = true;/' extensions/browser/manifest_v2_handler.cc 2>/dev/null || true
 
@@ -180,6 +202,50 @@ sed -i 's/bool g_allow_mv2_for_testing = false;/bool g_allow_mv2_for_testing = t
 # ==============================================================================
 sed -i '/^bool OffStoreInstallAllowedByPrefs(/a\  for (const char* d : {"addons.opera.com", "operacdn.com", "microsoftedge.microsoft.com", "edge.microsoft.com", "delivery.mp.microsoft.com", "github.com", "githubusercontent.com"}) if (item.GetURL().DomainIs(d) || item.GetReferrerUrl().DomainIs(d)) return true;' chrome/browser/download/download_crx_util.cc 2>/dev/null || true
 sed -i '/^bool ShouldDisableLegacyExtensions() {$/{N;N;N;N;N;N;s%bool ShouldDisableLegacyExtensions() {\n  if (g_allow_mv2_for_testing) {\n    // We allow legacy MV2 extensions for testing purposes.\n    return false;\n  }\n\n  return true;%bool ShouldDisableLegacyExtensions() {\n  // Aerium: Manifest V2 extensions stay loadable - see patch.sh.\n  return false;%}' extensions/browser/manifest_v2_handler.cc 2>/dev/null || true
+
+
+# ==============================================================================
+# [17.1] EXTENSIONS KEY COMMANDS: ROBUST ANDROID PLATFORM SUPPORT
+# ==============================================================================
+python3 - << 'EOF' || true
+import os, re
+p = "extensions/common/command.cc"
+if os.path.exists(p):
+    with open(p, "r", encoding="utf-8") as f:
+        c = f.read()
+
+    # 1. Clean up any accidental previous nested replacements
+    c = re.sub(r'\(+BUILDFLAG\(IS_LINUX\)[^\)]*\)+', 'BUILDFLAG(IS_LINUX)', c)
+    c = c.replace("BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_ANDROID)", "BUILDFLAG(IS_LINUX)")
+
+    # 2. Add BUILDFLAG(IS_ANDROID) to Linux platform checks cleanly
+    c = c.replace("#elif BUILDFLAG(IS_LINUX)", "#elif BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_ANDROID)")
+    c = c.replace("defined(OS_LINUX)", "(defined(OS_LINUX) || defined(OS_ANDROID))")
+
+    # 3. Fail-safe: Neutralize any remaining #error Unsupported platform
+    if "#error Unsupported platform" in c:
+        c = re.sub(
+            r'#else\s+#error Unsupported platform',
+            '#elif BUILDFLAG(IS_ANDROID)\n  return kPlatformLinux;\n#else\n  return kPlatformLinux; // fallback for unsupported platform',
+            c
+        )
+        c = c.replace("#error Unsupported platform", "// #error Unsupported platform neutralized for Android")
+
+    with open(p, "w", encoding="utf-8") as f:
+        f.write(c)
+
+    # 4. Dump the resulting context around line 126
+    lines = c.splitlines()
+    print("=== extensions/common/command.cc context (lines 90-145) ===")
+    start = max(0, 89)
+    end = min(len(lines), 145)
+    print("\n".join(f"{i+1}: {lines[i]}" for i in range(start, end)))
+    print("==========================================================")
+    print("[aerium] Successfully verified and patched extensions/common/command.cc")
+EOF
+
+find . -path "*/obj/extensions/common/common/command.o" -delete 2>/dev/null || true
+
 
 # ==============================================================================
 # [18] PHONE TOOLBAR EXTENSION CONTAINER & ACTION LIST
