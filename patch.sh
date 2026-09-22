@@ -194,10 +194,30 @@ sed -i '/<ViewStub/{N;N;N;N;N;N; /optional_button_stub/a\
 sed -i 's|(ToolbarTablet) mToolbarLayout,|mToolbarLayout,|' chrome/android/java/src/org/chromium/chrome/browser/toolbar/ToolbarManager.java 2>/dev/null || true
 sed -i '/\/\/ Draw the signin button if visible./i\        { View extContainer = findViewById(R.id.extensions_toolbar_container); if (extContainer != null \&\& extContainer.getVisibility() != View.GONE \&\& extContainer.getWidth() != 0) { canvas.save(); ViewUtils.translateCanvasToView(mToolbarButtonsContainer, extContainer, canvas); extContainer.draw(canvas); canvas.restore(); } }' chrome/browser/ui/android/toolbar/java/src/org/chromium/chrome/browser/toolbar/top/ToolbarPhone.java 2>/dev/null || true
 
-sed -i '/public class RecyclerViewDelegate {$/a\public View getContainerView() { return mContainer; }' chrome/browser/ui/android/toolbar/java/src/org/chromium/chrome/browser/toolbar/extensions/ExtensionActionListCoordinator.java 2>/dev/null || true
+# Clean up duplicate getContainerView() methods and inject only once
+python3 - << 'EOF' || true
+import os
+p = "chrome/browser/ui/android/toolbar/java/src/org/chromium/chrome/browser/toolbar/extensions/ExtensionActionListCoordinator.java"
+if os.path.exists(p):
+    with open(p, "r", encoding="utf-8") as f:
+        c = f.read()
+    while "public View getContainerView() { return mContainer; }\n" in c:
+        c = c.replace("public View getContainerView() { return mContainer; }\n", "")
+    while "public View getContainerView() { return mContainer; }" in c:
+        c = c.replace("public View getContainerView() { return mContainer; }", "")
+    target = "public class RecyclerViewDelegate {"
+    if target in c:
+        c = c.replace(target, target + "\npublic View getContainerView() { return mContainer; }", 1)
+        with open(p, "w", encoding="utf-8") as f:
+            f.write(c)
+        print("[aerium] Cleaned and ensured getContainerView() exactly once in ExtensionActionListCoordinator.java")
+EOF
+
+find . -path "*/obj/chrome/browser/ui/android/toolbar/java/src/org/chromium/chrome/browser/toolbar/extensions/java.javac.jar" -delete 2>/dev/null || true
+
 sed -i '/private void showPopupOnAnchor() {/,/private void closePopup() {/ s|if (buttonView == null) {|if (false) {|' chrome/browser/ui/android/toolbar/java/src/org/chromium/chrome/browser/toolbar/extensions/ExtensionActionListMediator.java 2>/dev/null || true
 sed -i 's|buttonView.setIsPressed(true);|if (buttonView != null) buttonView.setIsPressed(true);|' chrome/browser/ui/android/toolbar/java/src/org/chromium/chrome/browser/toolbar/extensions/ExtensionActionListMediator.java 2>/dev/null || true
-sed -i '/[[:space:]]mWindowAndroid,/!b;n;s|[[:space:]]buttonView,|buttonView != null ? buttonView : mRecyclerViewDelegate.getContainerView(),|' chrome/browser/ui/android/toolbar/java/src/org/chromium/chrome/browser/toolbar/extensions/ExtensionActionListMediator.java 2>/dev/null || true
+sed -i '/[[:space:]]mWindowAndroid,/!b;n;s|[[:space:]]buttonView,|buttonView != null ? buttonView : mRecyclerViewDelegate.getContainerView(),|' chrome/browser/ui/android/toolbar/java/src/org/chromium/chrome/browser/toolbar/extensions/ExtensionActionListMediator.java 2>/dev/null || true 
 
 # ==============================================================================
 # [19] OMNIBOX CLANK AUTOCOMPLETE FLAGS
@@ -214,8 +234,23 @@ sed -i '/"ExtensionsToolbarCoordinatorImpl.requestLayoutWithViewUtils()");$/a\if
 # ==============================================================================
 # [21] INCOGNITO WINDOW & PROCESS ISOLATION
 # ==============================================================================
-sed -i 's|if (!context->IsOffTheRecord()) {|if (true) {|' extensions/browser/process_manager.cc 2>/dev/null || true
-sed -i 's|public static boolean shouldOpenIncognitoAsWindow() {|public static boolean shouldOpenIncognitoAsWindow() { if (org.chromium.chrome.browser.preferences.ChromeSharedPreferences.getInstance().readBoolean(org.chromium.chrome.browser.preferences.ChromePreferenceKeys.AERIUM_SEAMLESS_INCOGNITO, false)) { return false; } if (true) return true;|' chrome/browser/incognito/android/java/src/org/chromium/chrome/browser/incognito/IncognitoUtils.java 2>/dev/null || true
+python3 - << 'EOF' || true
+import os
+p = "chrome/browser/incognito/android/java/src/org/chromium/chrome/browser/incognito/IncognitoUtils.java"
+if os.path.exists(p):
+    with open(p, "r", encoding="utf-8") as f:
+        c = f.read()
+    # Strip any duplicated injections
+    inject = "if (org.chromium.chrome.browser.preferences.ChromeSharedPreferences.getInstance().readBoolean(org.chromium.chrome.browser.preferences.ChromePreferenceKeys.AERIUM_SEAMLESS_INCOGNITO, false)) { return false; } if (true) return true;"
+    while inject in c:
+        c = c.replace(inject, "")
+    target = "public static boolean shouldOpenIncognitoAsWindow() {"
+    if target in c:
+        c = c.replace(target, target + " " + inject, 1)
+        with open(p, "w", encoding="utf-8") as f:
+            f.write(c)
+        print("[aerium] Cleaned and ensured shouldOpenIncognitoAsWindow() idempotent in IncognitoUtils.java")
+EOF
 sed -i 's|host_contents_->SetColorProviderSource(NoOpColorProviderSource::Get());|&\nhost_contents_->SetPrimaryPageImportance(content::ChildProcessImportance::IMPORTANT, content::ChildProcessImportance::NORMAL);|' extensions/browser/extension_host.cc 2>/dev/null || true
 sed -i '/content::WebContents\* web_contents = show_params->GetParentWebContents();/,/DCHECK(view_android);/{/GetParentWebContents/!d}' chrome/browser/ui/android/extensions/extension_install_dialog_view_android.cc 2>/dev/null || true
 sed -i 's|view_android->GetWindowAndroid();|show_params->GetParentWindow();|' chrome/browser/ui/android/extensions/extension_install_dialog_view_android.cc 2>/dev/null || true
@@ -230,8 +265,22 @@ sed -i '/extension_l10n_util::ValidateExtensionLocales($/,/error) &&$/{s|extensi
 sed -i 's|if (!IncognitoUtils.shouldOpenIncognitoAsWindow() \|\| isIncognitoShowing()) {|if (true) {|' chrome/android/java/src/org/chromium/chrome/browser/tabbed_mode/TabbedAppMenuPropertiesDelegate.java 2>/dev/null || true
 sed -i 's|if (!separateIncognitoWindow \|\| isIncognito) {|if (true) {|' chrome/android/java/src/org/chromium/chrome/browser/tabbed_mode/TabbedAppMenuPropertiesDelegate.java 2>/dev/null || true
 sed -i 's|assert treeId.equals(documentId);|&\n if ("com.android.externalstorage.documents".equals(mAuthority)) { String fastId = mRelativePath.isEmpty() ? treeId : (treeId.endsWith(":") ? treeId + mRelativePath : treeId + "/" + mRelativePath); Uri fast = DocumentsContract.buildDocumentUriUsingTree(tree, fastId); return contentUriExists(fast) ? fast : null; }|' base/android/java/src/org/chromium/base/VirtualDocumentPath.java 2>/dev/null || true
-sed -i 's|private void onTabChanged(@Nullable Tab tab) {|private void onTabChanged(@Nullable Tab tab) { if (tab != null \&\& tab.isIncognitoBranded()) { mSystemBackPressSupplier.set(true); return; }|' chrome/browser/back_press/android/java/src/org/chromium/chrome/browser/back_press/MinimizeAppAndCloseTabBackPressHandler.java 2>/dev/null || true
-sed -i '/for (int i = 0; i < tab_list->GetTabCount(); ++i) {/i if (!tab_list) { continue; }' chrome/browser/extensions/api/tabs/tabs_api.cc 2>/dev/null || true
+python3 - << 'EOF' || true
+import os
+p = "chrome/browser/back_press/android/java/src/org/chromium/chrome/browser/back_press/MinimizeAppAndCloseTabBackPressHandler.java"
+if os.path.exists(p):
+    with open(p, "r", encoding="utf-8") as f:
+        c = f.read()
+    inject = "if (tab != null && tab.isIncognitoBranded()) { mSystemBackPressSupplier.set(true); return; }"
+    while inject in c:
+        c = c.replace(inject, "")
+    target = "private void onTabChanged(@Nullable Tab tab) {"
+    if target in c:
+        c = c.replace(target, target + " " + inject, 1)
+        with open(p, "w", encoding="utf-8") as f:
+            f.write(c)
+        print("[aerium] Cleaned and ensured onTabChanged() idempotent in MinimizeAppAndCloseTabBackPressHandler.java")
+EOF
 
 # ==============================================================================
 # [23] WEBCONTENTS LIFETIME GUARD FOR OTR PROFILES
