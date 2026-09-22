@@ -327,7 +327,33 @@ sed -i 's|.with(ModalDialogProperties.FILTER_TOUCH_FOR_SECURITY, true)|.with(Mod
 # ==============================================================================
 sed -i 's|while (!(locale_path = locales.Next()).empty()) {|&if (locale_path.IsContentUri()) { locale_path = path.Append(locales.GetInfo().GetName()); }|' extensions/common/manifest_handlers/default_locale_handler.cc 2>/dev/null || true
 sed -i 's|while (!(locale_folder = locales.Next()).empty()) {|&if (locale_folder.IsContentUri()) { locale_folder = locale_path.Append(locales.GetInfo().GetName()); }|' extensions/common/extension_l10n_util.cc 2>/dev/null || true
-sed -i '/extension_l10n_util::ValidateExtensionLocales($/,/error) &&$/{s|extension_l10n_util::ValidateExtensionLocales(|(extension_path_.IsVirtualDocumentPath() \|\| &|;s|error) &&|error)) \&\&|}' extensions/browser/unpacked_installer.cc 2>/dev/null || true
+python3 - << 'EOF' || true
+import os, re
+p = "extensions/browser/unpacked_installer.cc"
+if os.path.exists(p):
+    with open(p, "r", encoding="utf-8") as f:
+        c = f.read()
+
+    # 1. Strip all repeated nested VirtualDocumentPath checks
+    c = re.sub(r'\(+extension_path_\.IsVirtualDocumentPath\(\)\s*\|\|\s*', '', c)
+    c = c.replace('error)) &&', 'error) &&')
+
+    # 2. Apply clean, properly parenthesized check exactly once
+    target = "extension_l10n_util::ValidateExtensionLocales("
+    clean_replacement = "(extension_path_.IsVirtualDocumentPath() || extension_l10n_util::ValidateExtensionLocales("
+    if target in c and "extension_path_.IsVirtualDocumentPath()" not in c:
+        c = c.replace(target, clean_replacement, 1)
+        # Match closing paren for the condition before &&
+        c = c.replace("error) &&", "error)) &&", 1)
+        with open(p, "w", encoding="utf-8") as f:
+            f.write(c)
+        print("[aerium] Cleaned and patched unpacked_installer.cc cleanly")
+    else:
+        with open(p, "w", encoding="utf-8") as f:
+            f.write(c)
+        print("[aerium] Cleaned unpacked_installer.cc")
+EOF
+find . -path "*/obj/extensions/browser/browser_sources/unpacked_installer.o" -delete 2>/dev/null || true
 sed -i 's|if (!IncognitoUtils.shouldOpenIncognitoAsWindow() \|\| isIncognitoShowing()) {|if (true) {|' chrome/android/java/src/org/chromium/chrome/browser/tabbed_mode/TabbedAppMenuPropertiesDelegate.java 2>/dev/null || true
 sed -i 's|if (!separateIncognitoWindow \|\| isIncognito) {|if (true) {|' chrome/android/java/src/org/chromium/chrome/browser/tabbed_mode/TabbedAppMenuPropertiesDelegate.java 2>/dev/null || true
 sed -i 's|assert treeId.equals(documentId);|&\n if ("com.android.externalstorage.documents".equals(mAuthority)) { String fastId = mRelativePath.isEmpty() ? treeId : (treeId.endsWith(":") ? treeId + mRelativePath : treeId + "/" + mRelativePath); Uri fast = DocumentsContract.buildDocumentUriUsingTree(tree, fastId); return contentUriExists(fast) ? fast : null; }|' base/android/java/src/org/chromium/base/VirtualDocumentPath.java 2>/dev/null || true
@@ -349,7 +375,7 @@ if os.path.exists(p):
 EOF
 
 # ==============================================================================
-# [23] WEBCONTENTS LIFETIME GUARD FOR OTR PROFILES
+# [23] WEBCONTENTS LIFETIME GUARD FOR OTR PROFILES (IDEMPOTENT)
 # ==============================================================================
 if [ -f content/public/browser/web_contents.h ] && ! grep -q "HasLiveWebContentsForBrowserContext" content/public/browser/web_contents.h; then
   sed -i '/CONTENT_EXPORT static WebContents\* FromRenderFrameHost(RenderFrameHost\* rfh);/a\CONTENT_EXPORT static bool HasLiveWebContentsForBrowserContext(BrowserContext* browser_context);' content/public/browser/web_contents.h 2>/dev/null || true
@@ -357,11 +383,36 @@ fi
 if [ -f content/browser/web_contents/web_contents_impl.cc ] && ! grep -q "HasLiveWebContentsForBrowserContext" content/browser/web_contents/web_contents_impl.cc; then
   sed -i '/^WebContentsImpl::WebContentsImpl(BrowserContext\* browser_context)/i\ bool WebContents::HasLiveWebContentsForBrowserContext(BrowserContext* browser_context) { for (WebContentsImpl* web_contents : WebContentsImpl::GetAllWebContents()) { if (web_contents->GetBrowserContext() == browser_context) { return true; } } return false; }' content/browser/web_contents/web_contents_impl.cc 2>/dev/null || true
 fi
-sed -i '/#include "content\/public\/browser\/render_process_host.h"/a#include "content/public/browser/web_contents.h"' chrome/browser/profiles/profile_destroyer.cc 2>/dev/null || true
-sed -i '/^void ProfileDestroyer::DestroyOTRProfileWhenAppropriateWithTimeout($/,/MaybeSendDestroyedNotification/{/  profile->MaybeSendDestroyedNotification();/i\
-if (content::WebContents::HasLiveWebContentsForBrowserContext(profile)) { return; }
-}' chrome/browser/profiles/profile_destroyer.cc 2>/dev/null || true
 
+# Guard profile_destroyer.cc to prevent duplicate includes or returns
+python3 - << 'EOF' || true
+import os
+p = "chrome/browser/profiles/profile_destroyer.cc"
+if os.path.exists(p):
+    with open(p, "r", encoding="utf-8") as f:
+        c = f.read()
+    
+    # 1. Clean any duplicate includes
+    inc = '#include "content/public/browser/web_contents.h"'
+    while c.count(inc) > 1:
+        c = c.replace(inc + "\n", "", 1)
+    if inc not in c:
+        c = c.replace('#include "content/public/browser/render_process_host.h"',
+                      '#include "content/public/browser/render_process_host.h"\n' + inc)
+
+    # 2. Clean duplicate return guards
+    guard = "if (content::WebContents::HasLiveWebContentsForBrowserContext(profile)) { return; }"
+    while c.count(guard) > 1:
+        c = c.replace(guard + "\n", "", 1)
+    if guard not in c:
+        target = "profile->MaybeSendDestroyedNotification();"
+        if target in c:
+            c = c.replace(target, guard + "\n  " + target, 1)
+
+    with open(p, "w", encoding="utf-8") as f:
+        f.write(c)
+    print("[aerium] Cleaned and ensured profile_destroyer.cc is idempotent")
+EOF
 # ==============================================================================
 # [24] MIXED PROFILE ACCEPTANCE & TAB GROUP UTILS
 # ==============================================================================
@@ -395,12 +446,20 @@ EOF
 fi
 
 # ==============================================================================
-# [25] TEST BUILD CIRCULAR INCLUDES & BACKUP SNACKBAR
+# [25] TEST BUILD CIRCULAR INCLUDES & BACKUP SNACKBAR (IDEMPOTENT)
 # ==============================================================================
-if [ -f "chrome/test/BUILD.gn" ]; then
-  echo "==> Fixing allow_circular_includes_from in chrome/test/BUILD.gn..."
-  grep -q '^allow_circular_includes_from' chrome/test/BUILD.gn || sed -i '1s/^/allow_circular_includes_from = []\n/' chrome/test/BUILD.gn 2>/dev/null || true
-fi
+python3 - << 'EOF' || true
+import os
+p = "chrome/test/BUILD.gn"
+if os.path.exists(p):
+    with open(p, "r", encoding="utf-8") as f:
+        c = f.read()
+    if "allow_circular_includes_from = []" not in c:
+        c = "allow_circular_includes_from = []\n" + c
+        with open(p, "w", encoding="utf-8") as f:
+            f.write(c)
+        print("[aerium] Added allow_circular_includes_from in chrome/test/BUILD.gn")
+EOF
 
 echo "==> Fixing RESTART_SNACKBAR_DURATION_MS in AeriumBackupFragment..."
 find . -name "AeriumBackupFragment.java" -exec sed -i 's/RESTART_SNACKBAR_DURATION_MS/6000/g' {} + 2>/dev/null || true
