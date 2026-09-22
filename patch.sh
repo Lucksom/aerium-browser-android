@@ -405,15 +405,24 @@ if os.path.exists(p):
             f.write(c)
 EOF
 
-# 2. Dump all relevant extension install headers and sources completely
+# 2. Touch security filter on ExtensionInstallDialogBridge.java
+sed -i 's|\.with(ModalDialogProperties.FILTER_TOUCH_FOR_SECURITY, true)|\.with(ModalDialogProperties.FILTER_TOUCH_FOR_SECURITY, false)|' chrome/browser/ui/android/extensions/java/src/org/chromium/chrome/browser/ui/extensions/ExtensionInstallDialogBridge.java 2>/dev/null || true
+
+# 3. Default locale handler fix
+sed -i 's|while (!(locale_path = locales.Next()).empty()) {|&if (locale_path.IsContentUri()) { locale_path = path.Append(locales.GetInfo().GetName()); }|' extensions/common/manifest_handlers/default_locale_handler.cc 2>/dev/null || true
+
+# 4. Dump all relevant extension install headers and sources completely
 python3 - << 'EOF'
 import os, glob
 
 def dump(path):
     print(f"\n==================== FILE: {path} ====================")
     if os.path.exists(path):
-        with open(path, "r", encoding="utf-8", errors="ignore") as f:
-            print(f.read())
+        try:
+            with open(path, "r", encoding="utf-8", errors="ignore") as f:
+                print(f.read())
+        except Exception as e:
+            print(f"Read error: {e}")
     else:
         print("FILE DOES NOT EXIST")
     print("=======================================================\n")
@@ -430,7 +439,7 @@ for p in glob.glob("chrome/browser/extensions/**/extension_install_prompt_client
 for p in glob.glob("chrome/browser/ui/android/extensions/**/*extension_install_dialog*", recursive=True):
     dump(p)
 
-EOF 
+EOF
 
                                       
  
