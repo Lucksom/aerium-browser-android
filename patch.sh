@@ -246,6 +246,51 @@ EOF
 
 find . -path "*/obj/extensions/common/common/command.o" -delete 2>/dev/null || true
 
+# ==============================================================================
+# [17.2] EXTENSIONS FAVICON RESOLUTION FOR ANDROID
+# ==============================================================================
+python3 - << 'EOF' || true
+import os
+p = "chrome/browser/extensions/favicon/favicon_util.cc"
+if os.path.exists(p):
+    with open(p, "r", encoding="utf-8") as f:
+        c = f.read()
+
+    guard = "#define AERIUM_FAVICON_FALLBACKS_DEFINED"
+    if guard not in c:
+        stub = """
+#define AERIUM_FAVICON_FALLBACKS_DEFINED
+#include "ui/resources/grit/ui_resources.h"
+
+// Android grit doesn't include desktop high-res default favicons
+#if !defined(IDR_DEFAULT_FAVICON)
+#define IDR_DEFAULT_FAVICON 0
+#endif
+#if !defined(IDR_DEFAULT_FAVICON_DARK)
+#define IDR_DEFAULT_FAVICON_DARK IDR_DEFAULT_FAVICON
+#endif
+#if !defined(IDR_DEFAULT_FAVICON_DARK_64)
+#define IDR_DEFAULT_FAVICON_DARK_64 IDR_DEFAULT_FAVICON_DARK
+#endif
+#if !defined(IDR_DEFAULT_FAVICON_64)
+#define IDR_DEFAULT_FAVICON_64 IDR_DEFAULT_FAVICON
+#endif
+#if !defined(IDR_DEFAULT_FAVICON_DARK_32)
+#define IDR_DEFAULT_FAVICON_DARK_32 IDR_DEFAULT_FAVICON_DARK
+#endif
+#if !defined(IDR_DEFAULT_FAVICON_32)
+#define IDR_DEFAULT_FAVICON_32 IDR_DEFAULT_FAVICON
+#endif
+"""
+        c = stub + "\n" + c
+        with open(p, "w", encoding="utf-8") as f:
+            f.write(c)
+        print("[aerium] Added Android default favicon fallbacks to favicon_util.cc")
+    else:
+        print("[aerium] favicon_util.cc already patched")
+EOF
+
+find . -path "*/obj/chrome/browser/extensions/extensions/favicon_util.o" -delete 2>/dev/null || true
 
 # ==============================================================================
 # [18] PHONE TOOLBAR EXTENSION CONTAINER & ACTION LIST
