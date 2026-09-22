@@ -386,7 +386,7 @@ sed -i '/"ExtensionsToolbarCoordinatorImpl.requestLayoutWithViewUtils()");$/a\if
 # ==============================================================================
 # [21] INCOGNITO WINDOW, PROCESS ISOLATION & EXTENSION INSTALL DIALOG
 # ==============================================================================
-echo "==> [21] Configuring Incognito, Process Isolation & Extension Install Dialog..."
+echo "==> [21] Running verified Incognito & Extension Install Dialog patch — v4-strip-dead-include-20260922"
 
 # 1. IncognitoUtils idempotent patch
 python3 - << 'EOF' || true
@@ -428,46 +428,28 @@ EOF
 # 3. Touch security filter on ExtensionInstallDialogBridge.java
 sed -i 's|\.with(ModalDialogProperties.FILTER_TOUCH_FOR_SECURITY, true)|\.with(ModalDialogProperties.FILTER_TOUCH_FOR_SECURITY, false)|' chrome/browser/ui/android/extensions/java/src/org/chromium/chrome/browser/ui/extensions/ExtensionInstallDialogBridge.java 2>/dev/null || true
 
-# 4. Diagnostic + Clean Patching for Extension Install Dialog View
+# 4. Clean Extension Install Dialog View: Strip dead include and include java_bitmap.h
 python3 - << 'EOF' || true
 import os, subprocess
 
 p_cc = "chrome/browser/ui/android/extensions/extension_install_dialog_view_android.cc"
 p_h = "chrome/browser/ui/android/extensions/extension_install_dialog_bridge.h"
 
-# Diagnostic check for git tracking of the header
-tracked = subprocess.run(
-    ["git", "ls-files", "--", p_h],
-    capture_output=True, text=True
-).stdout.strip()
-print(f"[aerium] git ls-files for bridge header: '{tracked}'")
-
-if tracked:
-    subprocess.run(["git", "checkout", "HEAD", "--", p_h], check=False)
-    print(f"[aerium] Restored {p_h} from git HEAD")
-else:
-    print(f"[aerium] {p_h} is NOT tracked in git at HEAD.")
-
-# Ensure we start from a known-clean .cc before patching
+# 1. Start from clean checkout of .cc file
 subprocess.run(["git", "checkout", "HEAD", "--", p_cc], check=False)
 
 if os.path.exists(p_cc):
     with open(p_cc, "r", encoding="utf-8", errors="ignore") as f:
         c = f.read()
 
-    print("\n--- Original first 25 lines of extension_install_dialog_view_android.cc ---")
-    for i, line in enumerate(c.splitlines()[:25]):
-        print(f"{i+1:2d}: {line}")
-    print("--------------------------------------------------------------------------\n")
-
-    # Step A: If the header is missing from disk, strip the dead include
+    # 2. If the bridge .h does not exist on disk, strip the dead include line
     if not os.path.exists(p_h):
         legacy_inc = '#include "chrome/browser/ui/android/extensions/extension_install_dialog_bridge.h"\n'
         if legacy_inc in c:
             c = c.replace(legacy_inc, "")
-            print("[aerium] Removed dead include for non-existent extension_install_dialog_bridge.h")
+            print("[aerium] Removed non-existent extension_install_dialog_bridge.h include")
 
-    # Step B: Ensure ui/gfx/android/java_bitmap.h is present before JNI headers
+    # 3. Ensure ui/gfx/android/java_bitmap.h is present before JNI headers
     jni_target = '#include "chrome/browser/ui/android/extensions/jni_headers/ExtensionInstallDialogBridge_jni.h"'
     if '#include "ui/gfx/android/java_bitmap.h"' not in c:
         if jni_target in c:
@@ -476,7 +458,7 @@ if os.path.exists(p_cc):
             c = '#include "ui/gfx/android/java_bitmap.h"\n' + c
         print("[aerium] Added ui/gfx/android/java_bitmap.h for SkBitmap JNI conversion")
 
-    # Step C: Null-safe window resolution
+    # 4. Fallback window resolution
     if "view_android->GetWindowAndroid()" in c and "show_params->GetParentWindow()" not in c:
         c = c.replace(
             "ui::WindowAndroid* window_android = view_android->GetWindowAndroid();",
@@ -490,10 +472,9 @@ if os.path.exists(p_cc):
     print(f"[aerium] Cleaned and saved {p_cc}")
 EOF
 
-# Delete stale object file so Siso recompiles
+# Force recompile of the object file
 find . -path "*/obj/chrome/browser/ui/android/extensions/extensions/extension_install_dialog_view_android.o" -delete 2>/dev/null || true
-            
-                              
+                                        
  
 # ==============================================================================
 # [22] CONTENT URI & DOCUMENT PATHS
