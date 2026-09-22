@@ -384,107 +384,116 @@ sed -i '/Pref.PIN_EXTENSIONS_MENU_BUTTON, this::updateMenuButtonPinState);$/a\if
 sed -i '/"ExtensionsToolbarCoordinatorImpl.requestLayoutWithViewUtils()");$/a\if (!isMenuButtonPinned()) { mContainer.findViewById(R.id.extensions_menu_button).setVisibility(View.GONE); }' chrome/browser/ui/android/toolbar/java/src/org/chromium/chrome/browser/toolbar/extensions/ExtensionsToolbarCoordinatorImpl.java 2>/dev/null || true
 
 # ==============================================================================
-# [21] INSPECT REAL EXTENSION INSTALL HEADERS & BRIDGE DECLARATIONS
+# [21] INCOGNITO WINDOW, PROCESS ISOLATION & EXTENSION INSTALL DIALOG
 # ==============================================================================
-echo "==> [21] Inspecting real Extension Install Prompt API definitions..."
+echo "==> [21] Configuring Incognito, Process Isolation & Extension Install Dialog..."
 
+# 1. IncognitoUtils idempotent patch
 python3 - << 'EOF' || true
-import os, glob, subprocess
+import os
+p = "chrome/browser/incognito/android/java/src/org/chromium/chrome/browser/incognito/IncognitoUtils.java"
+if os.path.exists(p):
+    with open(p, "r", encoding="utf-8") as f:
+        c = f.read()
+    inject = "if (org.chromium.chrome.browser.preferences.ChromeSharedPreferences.getInstance().readBoolean(org.chromium.chrome.browser.preferences.ChromePreferenceKeys.AERIUM_SEAMLESS_INCOGNITO, false)) { return false; } if (true) return true;"
+    while inject in c:
+        c = c.replace(inject, "")
+    target = "public static boolean shouldOpenIncognitoAsWindow() {"
+    if target in c:
+        c = c.replace(target, target + " " + inject, 1)
+        with open(p, "w", encoding="utf-8") as f:
+            f.write(c)
+        print("[aerium] Cleaned and ensured shouldOpenIncognitoAsWindow() idempotent in IncognitoUtils.java")
+EOF
 
-def dump_file(title, path, max_lines=60):
-    print(f"\n==================== {title} ({path}) ====================")
-    if os.path.exists(path):
-        try:
-            with open(path, "r", encoding="utf-8", errors="ignore") as f:
-                lines = f.readlines()
-                for i, line in enumerate(lines[:max_lines]):
-                    print(f"{i+1:3d}: {line.rstrip()}")
-                if len(lines) > max_lines:
-                    print(f"... [{len(lines) - max_lines} more lines]")
-        except Exception as e:
-            print(f"Error reading file: {e}")
-    else:
-        print("FILE DOES NOT EXIST ON DISK")
-    print("===============================================================\n")
+# 2. Extension Host: Safe, idempotent SetPrimaryPageImportance
+python3 - << 'EOF' || true
+import os
+p = "extensions/browser/extension_host.cc"
+if os.path.exists(p):
+    with open(p, "r", encoding="utf-8") as f:
+        c = f.read()
+    call = "host_contents_->SetPrimaryPageImportance(content::ChildProcessImportance::IMPORTANT, content::ChildProcessImportance::NORMAL);"
+    while c.count(call) > 1:
+        c = c.replace(call + "\n", "", 1)
+    if call not in c:
+        target = "host_contents_->SetColorProviderSource(NoOpColorProviderSource::Get());"
+        if target in c:
+            c = c.replace(target, target + "\n" + call, 1)
+            with open(p, "w", encoding="utf-8") as f:
+                f.write(c)
+            print("[aerium] Patched SetPrimaryPageImportance cleanly in extension_host.cc")
+EOF
 
-# 1. Check if extension_install_dialog_bridge.h was tracked in git!
-print("\n=== Checking if extension_install_dialog_bridge.h is tracked in git ===")
-try:
-    tracked = subprocess.run(
-        ["git", "ls-files", "--", "chrome/browser/ui/android/extensions/extension_install_dialog_bridge.h"],
-        capture_output=True, text=True
-    ).stdout.strip()
-    if tracked:
-        print(f"[FOUND] {tracked} is git-tracked! Dumping HEAD version:")
-        res = subprocess.run(
-            ["git", "show", f"HEAD:{tracked}"], capture_output=True, text=True
+# 3. Touch security filter on ExtensionInstallDialogBridge.java
+sed -i 's|\.with(ModalDialogProperties.FILTER_TOUCH_FOR_SECURITY, true)|\.with(ModalDialogProperties.FILTER_TOUCH_FOR_SECURITY, false)|' chrome/browser/ui/android/extensions/java/src/org/chromium/chrome/browser/ui/extensions/ExtensionInstallDialogBridge.java 2>/dev/null || true
+
+# 4. Diagnostic + Clean Patching for Extension Install Dialog View
+python3 - << 'EOF' || true
+import os, subprocess
+
+p_cc = "chrome/browser/ui/android/extensions/extension_install_dialog_view_android.cc"
+p_h = "chrome/browser/ui/android/extensions/extension_install_dialog_bridge.h"
+
+# Diagnostic check for git tracking of the header
+tracked = subprocess.run(
+    ["git", "ls-files", "--", p_h],
+    capture_output=True, text=True
+).stdout.strip()
+print(f"[aerium] git ls-files for bridge header: '{tracked}'")
+
+if tracked:
+    subprocess.run(["git", "checkout", "HEAD", "--", p_h], check=False)
+    print(f"[aerium] Restored {p_h} from git HEAD")
+else:
+    print(f"[aerium] {p_h} is NOT tracked in git at HEAD.")
+
+# Ensure we start from a known-clean .cc before patching
+subprocess.run(["git", "checkout", "HEAD", "--", p_cc], check=False)
+
+if os.path.exists(p_cc):
+    with open(p_cc, "r", encoding="utf-8", errors="ignore") as f:
+        c = f.read()
+
+    print("\n--- Original first 25 lines of extension_install_dialog_view_android.cc ---")
+    for i, line in enumerate(c.splitlines()[:25]):
+        print(f"{i+1:2d}: {line}")
+    print("--------------------------------------------------------------------------\n")
+
+    # Step A: If the header is missing from disk, strip the dead include
+    if not os.path.exists(p_h):
+        legacy_inc = '#include "chrome/browser/ui/android/extensions/extension_install_dialog_bridge.h"\n'
+        if legacy_inc in c:
+            c = c.replace(legacy_inc, "")
+            print("[aerium] Removed dead include for non-existent extension_install_dialog_bridge.h")
+
+    # Step B: Ensure ui/gfx/android/java_bitmap.h is present before JNI headers
+    jni_target = '#include "chrome/browser/ui/android/extensions/jni_headers/ExtensionInstallDialogBridge_jni.h"'
+    if '#include "ui/gfx/android/java_bitmap.h"' not in c:
+        if jni_target in c:
+            c = c.replace(jni_target, '#include "ui/gfx/android/java_bitmap.h"\n' + jni_target)
+        else:
+            c = '#include "ui/gfx/android/java_bitmap.h"\n' + c
+        print("[aerium] Added ui/gfx/android/java_bitmap.h for SkBitmap JNI conversion")
+
+    # Step C: Null-safe window resolution
+    if "view_android->GetWindowAndroid()" in c and "show_params->GetParentWindow()" not in c:
+        c = c.replace(
+            "ui::WindowAndroid* window_android = view_android->GetWindowAndroid();",
+            "ui::WindowAndroid* window_android = show_params ? show_params->GetParentWindow() : (view_android ? view_android->GetWindowAndroid() : nullptr);"
         )
-        print(res.stdout if res.stdout else f"[stderr] {res.stderr.strip()}")
-        # Restore it immediately
-        subprocess.run(["git", "checkout", "HEAD", "--", tracked], check=False)
-        print(f"[aerium] Restored {tracked} from git HEAD!")
-    else:
-        print("Not tracked at HEAD — searching git log for it:")
-        res = subprocess.run(
-            ["git", "log", "-n", "1", "--stat", "--", "chrome/browser/ui/android/extensions/extension_install_dialog_bridge.h"],
-            capture_output=True, text=True
-        )
-        print(res.stdout if res.stdout else f"[stderr] {res.stderr.strip()}")
-except Exception as e:
-    print(f"git check failed: {e}")
+        print("[aerium] Added show_params->GetParentWindow() fallback for window_android")
 
-# 2. Inspect extension_install_prompt.h
-dump_file("extension_install_prompt.h", "chrome/browser/extensions/extension_install_prompt.h", 80)
+    with open(p_cc, "w", encoding="utf-8") as f:
+        f.write(c)
 
-# 3. Inspect extension_install_prompt_show_params.h
-dump_file("extension_install_prompt_show_params.h", "chrome/browser/extensions/extension_install_prompt_show_params.h", 50)
+    print(f"[aerium] Cleaned and saved {p_cc}")
+EOF
 
-# 4. Search for ExtensionInstallPromptClient headers
-print("=== Searching for ExtensionInstallPromptClient headers ===")
-try:
-    for root, _, files in os.walk("chrome/browser/extensions"):
-        for f in files:
-            if "prompt" in f.lower() or "client" in f.lower():
-                p = os.path.join(root, f)
-                try:
-                    with open(p, "r", encoding="utf-8", errors="ignore") as file:
-                        if "class ExtensionInstallPromptClient" in file.read():
-                            dump_file(f, p, 60)
-                except Exception:
-                    pass
-except Exception as e:
-    print(f"Search failed: {e}")
-
-# 5. Search for class ExtensionInstallDialogBridge across all C++ headers
-print("=== Searching for ExtensionInstallDialogBridge in C++ ===")
-try:
-    for root, _, files in os.walk("chrome/browser/ui/android/extensions"):
-        for f in files:
-            if f.endswith((".h", ".cc")):
-                p = os.path.join(root, f)
-                try:
-                    with open(p, "r", encoding="utf-8", errors="ignore") as file:
-                        cnt = file.read()
-                        if "ExtensionInstallDialogBridge" in cnt:
-                            print(f"Found reference in {p}")
-                except Exception:
-                    pass
-except Exception as e:
-    print(f"Search failed: {e}")
-
-# 6. Dump original extension_install_dialog_view_android.cc from HEAD
-print("\n=== Dumping original extension_install_dialog_view_android.cc from HEAD ===")
-try:
-    orig_view = subprocess.run(
-        ["git", "show", "HEAD:chrome/browser/ui/android/extensions/extension_install_dialog_view_android.cc"],
-        capture_output=True, text=True
-    )
-    print(orig_view.stdout if orig_view.stdout else f"[stderr] {orig_view.stderr.strip()}")
-except Exception as e:
-    print(f"Could not dump HEAD version: {e}")
-
-EOF 
-              
+# Delete stale object file so Siso recompiles
+find . -path "*/obj/chrome/browser/ui/android/extensions/extensions/extension_install_dialog_view_android.o" -delete 2>/dev/null || true
+            
+                              
  
 # ==============================================================================
 # [22] CONTENT URI & DOCUMENT PATHS
