@@ -379,103 +379,74 @@ sed -i '/Pref.PIN_EXTENSIONS_MENU_BUTTON, this::updateMenuButtonPinState);$/a\if
 sed -i '/"ExtensionsToolbarCoordinatorImpl.requestLayoutWithViewUtils()");$/a\if (!isMenuButtonPinned()) { mContainer.findViewById(R.id.extensions_menu_button).setVisibility(View.GONE); }' chrome/browser/ui/android/toolbar/java/src/org/chromium/chrome/browser/toolbar/extensions/ExtensionsToolbarCoordinatorImpl.java 2>/dev/null || true
 
 # ==============================================================================
-# [21] INCOGNITO WINDOW & PROCESS ISOLATION
+# [21] INCOGNITO WINDOW & PROCESS ISOLATION & EXTENSION INSTALL DIALOG
 # ==============================================================================
-echo "==> [21] Applying Incognito Window, Process Isolation & Extension Install Dialog..."
+echo "==> [21] Checking and resolving Extension Install Dialog View..."
 
-# 1. IncognitoUtils idempotent patch
 python3 - << 'EOF' || true
-import os
-p = "chrome/browser/incognito/android/java/src/org/chromium/chrome/browser/incognito/IncognitoUtils.java"
-if os.path.exists(p):
-    with open(p, "r", encoding="utf-8") as f:
-        c = f.read()
-    inject = "if (org.chromium.chrome.browser.preferences.ChromeSharedPreferences.getInstance().readBoolean(org.chromium.chrome.browser.preferences.ChromePreferenceKeys.AERIUM_SEAMLESS_INCOGNITO, false)) { return false; } if (true) return true;"
-    while inject in c:
-        c = c.replace(inject, "")
-    target = "public static boolean shouldOpenIncognitoAsWindow() {"
-    if target in c:
-        c = c.replace(target, target + " " + inject, 1)
-        with open(p, "w", encoding="utf-8") as f:
-            f.write(c)
-        print("[aerium] Cleaned and ensured shouldOpenIncognitoAsWindow() idempotent in IncognitoUtils.java")
-EOF
+import os, glob
 
-# 2. Extension Host: Safe, idempotent SetPrimaryPageImportance
-python3 - << 'EOF' || true
-import os
-p = "extensions/browser/extension_host.cc"
-if os.path.exists(p):
-    with open(p, "r", encoding="utf-8") as f:
-        c = f.read()
-    call = "host_contents_->SetPrimaryPageImportance(content::ChildProcessImportance::IMPORTANT, content::ChildProcessImportance::NORMAL);"
-    while c.count(call) > 1:
-        c = c.replace(call + "\n", "", 1)
-    if call not in c:
-        target = "host_contents_->SetColorProviderSource(NoOpColorProviderSource::Get());"
-        if target in c:
-            c = c.replace(target, target + "\n" + call, 1)
-            with open(p, "w", encoding="utf-8") as f:
-                f.write(c)
-            print("[aerium] Patched SetPrimaryPageImportance cleanly in extension_host.cc")
-EOF
+# 1. Search for existing extension_install_dialog_bridge.h in the tree
+found = []
+for root, dirs, files in os.walk("chrome"):
+    if "out" in root:
+        continue
+    for f in files:
+        if f == "extension_install_dialog_bridge.h":
+            found.append(os.path.join(root, f))
 
-# 3. Extension Install Dialog View: Overwrite with complete, balanced, pristine C++
-cat << 'EOF' > chrome/browser/ui/android/extensions/extension_install_dialog_view_android.cc
-// Copyright 2024 The Chromium Authors
-// Use of this source code is governed by a BSD-style license that can be
-// found in the LICENSE file.
+print(f"[aerium] Found header locations: {found}")
+
+# 2. Check the real declaration in extension_install_prompt.h
+prompt_h = "chrome/browser/extensions/extension_install_prompt.h"
+if os.path.exists(prompt_h):
+    with open(prompt_h, "r", encoding="utf-8") as f:
+        lines = f.readlines()
+    print("=== ShowDialog signatures in extension_install_prompt.h ===")
+    for i, line in enumerate(lines):
+        if "ShowDialog" in line or "show_params_" in line:
+            print(f"{i+1}: {line.strip()}")
+    print("===========================================================")
+
+# 3. If no header exists, provide the minimal clean bridge header
+bridge_h = "chrome/browser/ui/android/extensions/extension_install_dialog_bridge.h"
+if not found and not os.path.exists(bridge_h):
+    os.makedirs(os.path.dirname(bridge_h), exist_ok=True)
+    with open(bridge_h, "w", encoding="utf-8") as f:
+        f.write("""// Copyright 2024 The Chromium Authors
+#ifndef CHROME_BROWSER_UI_ANDROID_EXTENSIONS_EXTENSION_INSTALL_DIALOG_BRIDGE_H_
+#define CHROME_BROWSER_UI_ANDROID_EXTENSIONS_EXTENSION_INSTALL_DIALOG_BRIDGE_H_
 
 #include <memory>
-#include <utility>
-
-#include "base/android/jni_android.h"
 #include "chrome/browser/extensions/extension_install_prompt.h"
-#include "chrome/browser/ui/android/extensions/extension_install_dialog_bridge.h"
-#include "content/public/browser/web_contents.h"
-#include "ui/android/view_android.h"
-#include "ui/android/window_android.h"
 
-// Must come after all headers that specialize FromJniType() / ToJniType().
-#include "chrome/browser/ui/android/extensions/jni_headers/ExtensionInstallDialogBridge_jni.h"
-
-namespace {
-
-void ShowExtensionInstallDialog(
-    ExtensionInstallPrompt::ShowParams* show_params,
-    ExtensionInstallPrompt::DoneCallback done_callback,
-    std::unique_ptr<ExtensionInstallPrompt::Prompt> prompt) {
-  content::WebContents* web_contents = show_params ? show_params->GetParentWebContents() : nullptr;
-  ui::WindowAndroid* window_android = show_params ? show_params->GetParentWindow() : nullptr;
-
-  if (!window_android && web_contents && web_contents->GetNativeView()) {
-    window_android = web_contents->GetNativeView()->GetWindowAndroid();
-  }
-
-  if (!window_android) {
-    std::move(done_callback).Run(ExtensionInstallPrompt::Result::ABORTED);
-    return;
-  }
-
-  new ExtensionInstallDialogBridge(window_android, std::move(done_callback),
-                                  std::move(prompt));
+namespace ui {
+class WindowAndroid;
 }
 
-}  // namespace
+class ExtensionInstallDialogBridge {
+ public:
+  ExtensionInstallDialogBridge(
+      ui::WindowAndroid* window_android,
+      ExtensionInstallPrompt::DoneCallback done_callback,
+      std::unique_ptr<ExtensionInstallPrompt::Prompt> prompt);
+  virtual ~ExtensionInstallDialogBridge();
+};
 
-void ExtensionInstallPrompt::ShowDialog(
-    ExtensionInstallPrompt::DoneCallback done_callback,
-    std::unique_ptr<ExtensionInstallPrompt::Prompt> prompt) {
-  ShowExtensionInstallDialog(show_params_.get(), std::move(done_callback),
-                             std::move(prompt));
-}
+#endif
+""")
+    print(f"[aerium] Created {bridge_h}")
+elif found and found[0] != bridge_h:
+    # Symlink or copy to expected include path
+    os.makedirs(os.path.dirname(bridge_h), exist_ok=True)
+    with open(found[0], "r", encoding="utf-8") as src, open(bridge_h, "w", encoding="utf-8") as dst:
+        dst.write(src.read())
+    print(f"[aerium] Copied header from {found[0]} to {bridge_h}")
+
 EOF
 
-# Force recompile of extension_install_dialog_view_android.o
+# Delete the bad object file so Siso recompiles fresh
 find . -path "*/obj/chrome/browser/ui/android/extensions/extensions/extension_install_dialog_view_android.o" -delete 2>/dev/null || true
-
-# 4. Touch security filter on ExtensionInstallDialogBridge.java
-sed -i 's|\.with(ModalDialogProperties.FILTER_TOUCH_FOR_SECURITY, true)|\.with(ModalDialogProperties.FILTER_TOUCH_FOR_SECURITY, false)|' chrome/browser/ui/android/extensions/java/src/org/chromium/chrome/browser/ui/extensions/ExtensionInstallDialogBridge.java 2>/dev/null || true
 
 
 
