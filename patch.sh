@@ -293,6 +293,42 @@ EOF
 find . -path "*/obj/chrome/browser/extensions/extensions/favicon_util.o" -delete 2>/dev/null || true
 
 # ==============================================================================
+# [17.3] CHROME COMPONENT EXTENSION RESOURCE MANAGER FOR ANDROID
+# ==============================================================================
+python3 - << 'EOF' || true
+import os
+p = "chrome/browser/extensions/chrome_component_extension_resource_manager.cc"
+if os.path.exists(p):
+    with open(p, "r", encoding="utf-8") as f:
+        c = f.read()
+
+    guard = "#define AERIUM_WEBSTORE_STUB 1"
+    if guard not in c:
+        stub = """
+#define AERIUM_WEBSTORE_STUB 1
+#if !defined(IDR_WEBSTORE_ICON)
+#define IDR_WEBSTORE_ICON 0
+#endif
+#if !defined(IDR_WEBSTORE_ICON_16)
+#define IDR_WEBSTORE_ICON_16 0
+#endif
+"""
+        target = "constexpr webui::ResourcePath kExtraComponentExtensionResources[]"
+        if target in c:
+            c = c.replace(target, stub + "\n  " + target, 1)
+        else:
+            c = stub + "\n" + c
+        
+        with open(p, "w", encoding="utf-8") as f:
+            f.write(c)
+        print("[aerium] Patched IDR_WEBSTORE_ICON fallbacks in chrome_component_extension_resource_manager.cc")
+    else:
+        print("[aerium] chrome_component_extension_resource_manager.cc already patched")
+EOF
+
+find . -path "*/obj/chrome/browser/extensions/extensions/chrome_component_extension_resource_manager.o" -delete 2>/dev/null || true
+
+# ==============================================================================
 # [18] PHONE TOOLBAR EXTENSION CONTAINER & ACTION LIST
 # ==============================================================================
 sed -i '/<ViewStub/{N;N;N;N;N;N; /optional_button_stub/a\
