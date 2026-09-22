@@ -398,10 +398,50 @@ if os.path.exists(p):
             f.write(c)
         print("[aerium] Cleaned and ensured shouldOpenIncognitoAsWindow() idempotent in IncognitoUtils.java")
 EOF
-sed -i 's|host_contents_->SetColorProviderSource(NoOpColorProviderSource::Get());|&\nhost_contents_->SetPrimaryPageImportance(content::ChildProcessImportance::IMPORTANT, content::ChildProcessImportance::NORMAL);|' extensions/browser/extension_host.cc 2>/dev/null || true
-sed -i '/content::WebContents\* web_contents = show_params->GetParentWebContents();/,/DCHECK(view_android);/{/GetParentWebContents/!d}' chrome/browser/ui/android/extensions/extension_install_dialog_view_android.cc 2>/dev/null || true
-sed -i 's|view_android->GetWindowAndroid();|show_params->GetParentWindow();|' chrome/browser/ui/android/extensions/extension_install_dialog_view_android.cc 2>/dev/null || true
+
+# Idempotent extension_host.cc patch
+python3 - << 'EOF' || true
+import os
+p = "extensions/browser/extension_host.cc"
+if os.path.exists(p):
+    with open(p, "r", encoding="utf-8") as f:
+        c = f.read()
+    call = "host_contents_->SetPrimaryPageImportance(content::ChildProcessImportance::IMPORTANT, content::ChildProcessImportance::NORMAL);"
+    while c.count(call) > 1:
+        c = c.replace(call + "\n", "", 1)
+    if call not in c:
+        target = "host_contents_->SetColorProviderSource(NoOpColorProviderSource::Get());"
+        if target in c:
+            c = c.replace(target, target + "\n" + call, 1)
+            with open(p, "w", encoding="utf-8") as f:
+                f.write(c)
+            print("[aerium] Patched SetPrimaryPageImportance cleanly in extension_host.cc")
+EOF
+
+# Restore clean git HEAD of extension_install_dialog_view_android.cc and patch safely
+git checkout -- chrome/browser/ui/android/extensions/extension_install_dialog_view_android.cc 2>/dev/null || true
+python3 - << 'EOF' || true
+import os
+p = "chrome/browser/ui/android/extensions/extension_install_dialog_view_android.cc"
+if os.path.exists(p):
+    with open(p, "r", encoding="utf-8") as f:
+        c = f.read()
+
+    # Safely swap view_android->GetWindowAndroid() with show_params->GetParentWindow() without deleting any braces
+    if "view_android->GetWindowAndroid()" in c:
+        c = c.replace("view_android->GetWindowAndroid()", "show_params->GetParentWindow()")
+    if "if (!web_contents) {" in c:
+        c = c.replace("if (!web_contents) {", "if (!web_contents && !show_params->GetParentWindow()) {")
+
+    with open(p, "w", encoding="utf-8") as f:
+        f.write(c)
+    print("[aerium] Patched extension_install_dialog_view_android.cc safely without deleting braces")
+EOF
+
+find . -path "*/obj/chrome/browser/ui/android/extensions/extensions/extension_install_dialog_view_android.o" -delete 2>/dev/null || true
+
 sed -i 's|.with(ModalDialogProperties.FILTER_TOUCH_FOR_SECURITY, true)|.with(ModalDialogProperties.FILTER_TOUCH_FOR_SECURITY, false)|' chrome/browser/ui/android/extensions/java/src/org/chromium/chrome/browser/ui/extensions/ExtensionInstallDialogBridge.java 2>/dev/null || true
+    
 
 # ==============================================================================
 # [22] CONTENT URI & DOCUMENT PATHS
