@@ -426,73 +426,62 @@ EOF
 # 4. Touch security filter on ExtensionInstallDialogBridge.java
 sed -i 's|\.with(ModalDialogProperties.FILTER_TOUCH_FOR_SECURITY, true)|\.with(ModalDialogProperties.FILTER_TOUCH_FOR_SECURITY, false)|' chrome/browser/ui/android/extensions/java/src/org/chromium/chrome/browser/ui/extensions/ExtensionInstallDialogBridge.java 2>/dev/null || true
 
-# 5. Restore pristine extension_install_dialog_view_android.cc from git, then patch correctly
+# 5. Restore current checkout version of extension_install_dialog_view_android.cc and patch cleanly
 python3 - << 'EOF' || true
 import os, subprocess
 
 p = "chrome/browser/ui/android/extensions/extension_install_dialog_view_android.cc"
 
-# Step A: Restore original pristine file from git before any sed edits
-try:
-    # Try finding the commit where it was added or clean HEAD from remote
-    orig_content = subprocess.check_output(
-        ["git", "log", "-S", "ExtensionInstallDialogBridge", "--format=%H", "--", p],
-        text=True
-    ).strip().splitlines()
-    if orig_content:
-        # Get the original file from the commit that introduced it
-        clean_code = subprocess.check_output(["git", "show", f"{orig_content[-1]}:{p}"], text=True)
-    else:
-        clean_code = subprocess.check_output(["git", "show", f"HEAD:{p}"], text=True)
-except Exception as e:
-    clean_code = None
-
-if clean_code and "{" in clean_code:
-    with open(p, "w", encoding="utf-8") as f:
-        f.write(clean_code)
-    print(f"[aerium] Successfully restored pristine {p} from git history")
+result = subprocess.run(["git", "checkout", "--", p], check=False)
+if result.returncode != 0:
+    print(f"[aerium] WARNING: git checkout failed for {p}, patching in place")
 else:
-    # If git show failed, checkout directly
-    subprocess.run(["git", "checkout", "--", p], check=False)
-    print(f"[aerium] Checked out {p} using git checkout --")
+    print(f"[aerium] Restored {p} from current checkout")
 
-# Step B: Read the restored file and apply ONLY the necessary fixes
-with open(p, "r", encoding="utf-8") as f:
-    c = f.read()
+if os.path.exists(p):
+    with open(p, "r", encoding="utf-8") as f:
+        c = f.read()
 
-# Fix 1: Ensure java_bitmap.h is included BEFORE any _jni.h (CRITICAL for SkBitmap conversion)
-if '#include "ui/gfx/android/java_bitmap.h"' not in c:
-    target = '#include "chrome/browser/ui/android/extensions/jni_headers/ExtensionInstallDialogBridge_jni.h"'
-    if target in c:
-        c = c.replace(target, '#include "ui/gfx/android/java_bitmap.h"\n' + target)
-    else:
-        # Place before the first include of jni
-        c = '#include "ui/gfx/android/java_bitmap.h"\n' + c
-    print("[aerium] Added ui/gfx/android/java_bitmap.h before JNI headers")
+    # 1. Strip any obsolete/legacy extension_install_dialog_bridge.h include
+    legacy_inc = '#include "chrome/browser/ui/android/extensions/extension_install_dialog_bridge.h"\n'
+    if legacy_inc in c:
+        c = c.replace(legacy_inc, "")
+        print("[aerium] Removed obsolete extension_install_dialog_bridge.h include")
 
-# Fix 2: Null-safe web_contents and window_android resolution so dialog works from background/extension pages
-old_check = "if (!web_contents) {"
-if old_check in c:
-    c = c.replace(old_check, "if (!web_contents && (!show_params || !show_params->GetParentWindow())) {")
-    print("[aerium] Added null-safety check for show_params->GetParentWindow()")
+    # 2. Ensure ui/gfx/android/java_bitmap.h is present before JNI headers
+    jni_target = '#include "chrome/browser/ui/android/extensions/jni_headers/ExtensionInstallDialogBridge_jni.h"'
+    if '#include "ui/gfx/android/java_bitmap.h"' not in c:
+        if jni_target in c:
+            c = c.replace(jni_target, '#include "ui/gfx/android/java_bitmap.h"\n' + jni_target)
+        else:
+            c = '#include "ui/gfx/android/java_bitmap.h"\n' + c
+        print("[aerium] Added ui/gfx/android/java_bitmap.h for SkBitmap JNI conversion")
 
-# Fix 3: Fallback window resolution if view_android is used
-if "view_android->GetWindowAndroid()" in c and "show_params->GetParentWindow()" not in c:
-    c = c.replace(
-        "ui::WindowAndroid* window_android = view_android->GetWindowAndroid();",
-        "ui::WindowAndroid* window_android = show_params ? show_params->GetParentWindow() : (view_android ? view_android->GetWindowAndroid() : nullptr);"
-    )
-    print("[aerium] Added show_params->GetParentWindow() fallback for window_android")
+    # 3. Add null-safe fallback for show_params->GetParentWindow()
+    old_check = "if (!web_contents) {"
+    if old_check in c:
+        c = c.replace(old_check, "if (!web_contents && (!show_params || !show_params->GetParentWindow())) {")
+        print("[aerium] Added null-safety check for show_params->GetParentWindow()")
 
-with open(p, "w", encoding="utf-8") as f:
-    f.write(c)
+    # 4. Fallback window resolution
+    if "view_android->GetWindowAndroid()" in c and "show_params->GetParentWindow()" not in c:
+        c = c.replace(
+            "ui::WindowAndroid* window_android = view_android->GetWindowAndroid();",
+            "ui::WindowAndroid* window_android = show_params ? show_params->GetParentWindow() : (view_android ? view_android->GetWindowAndroid() : nullptr);"
+        )
+        print("[aerium] Added show_params->GetParentWindow() fallback for window_android")
 
-print(f"[aerium] Verified and successfully written {p}")
+    with open(p, "w", encoding="utf-8") as f:
+        f.write(c)
+
+    print(f"[aerium] Successfully verified and saved {p}")
 EOF
 
 # Delete the bad object file so Siso recompiles fresh
 find . -path "*/obj/chrome/browser/ui/android/extensions/extensions/extension_install_dialog_view_android.o" -delete 2>/dev/null || true
 
+  
+ 
 # ==============================================================================
 # [22] CONTENT URI & DOCUMENT PATHS
 # ==============================================================================
