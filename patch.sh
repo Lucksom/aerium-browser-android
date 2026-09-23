@@ -697,46 +697,85 @@ echo "==> Fixing RESTART_SNACKBAR_DURATION_MS in AeriumBackupFragment..."
 find . -name "AeriumBackupFragment.java" -exec sed -i 's/RESTART_SNACKBAR_DURATION_MS/6000/g' {} + 2>/dev/null || true
 
 # ==============================================================================
-# [26] AERIUM CLASSIC VERTICAL STACK TAB SWITCHER & SETTINGS INJECTION
+# [26] AERIUM CLASSIC 3D OVERLAPPING STACK TAB SWITCHER (CHROMIUM 88 ENGINE)
 # ==============================================================================
-echo "==> [26] Injecting Vertical Stack Tab Switcher with Settings in Tabs and tab groups..."
+echo "==> [26] Injecting True Classic 3D Overlapping Stack Tab Switcher with Settings..."
 
-# --- Step A: Clean reset of files touched by previous failed attempts ---
+# --- Step A: Clean reset of files touched by previous attempts ---
 git checkout -- \
   chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabUiFeatureUtilities.java \
   chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabListCoordinator.java \
   chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabListMediator.java \
+  chrome/android/java/res/values/values.xml \
+  chrome/android/java/res/values/arrays.xml \
   chrome/android/java/res/xml/tabs_settings.xml \
   chrome/browser/ui/android/strings/android_chrome_strings.grd 2>/dev/null || true
 
 python3 - << 'EOF'
 import os, sys, traceback, glob, re
 
+def find_canonical_file(filename, path_hint=""):
+    out_sub = f"{os.sep}out{os.sep}"
+    test_segments = [
+        f"{os.sep}test{os.sep}",
+        f"{os.sep}tests{os.sep}",
+        f"{os.sep}javatests{os.sep}",
+        f"{os.sep}junit{os.sep}",
+        f"{os.sep}robolectric{os.sep}"
+    ]
+    candidates = glob.glob(f"**/{filename}", recursive=True)
+    matches = [
+        p for p in candidates
+        if out_sub not in p and not p.startswith(f"out{os.sep}")
+        and not any(ts in p.lower() for ts in test_segments)
+        and (not path_hint or path_hint in p)
+    ]
+    if not matches:
+        print(f"[FATAL] [aerium] Target file not found: {filename} (hint: '{path_hint}')")
+        sys.exit(1)
+    if len(matches) > 1:
+        print(f"[FATAL] [aerium] Ambiguous matches for {filename}: {matches}")
+        sys.exit(1)
+    return matches[0]
+
 def patch_file(p, desc, func):
     if not os.path.exists(p):
-        print(f"[ERROR] [aerium] Target file not found for {desc}: {p}")
-        return False
+        print(f"[FATAL] [aerium] Target file not found for {desc}: {p}")
+        sys.exit(1)
     try:
         with open(p, "r", encoding="utf-8") as f:
             content = f.read()
-        new_content = func(content)
-        if new_content is None or new_content == content:
-            print(f"[WARN] [aerium] No changes applied for {desc} in {p}")
-            return False
+        
+        res = func(content)
+        if res is None:
+            print(f"[FATAL] [aerium] Patch failed to apply for {desc} in {p}")
+            sys.exit(1)
+            
+        new_content, already_patched = res
+        if already_patched:
+            print(f"[aerium] [ALREADY PATCHED] {desc} in {p}")
+            return True
+            
+        if new_content == content:
+            print(f"[FATAL] [aerium] No changes resulted from {desc} in {p}")
+            sys.exit(1)
+            
         with open(p, "w", encoding="utf-8") as f:
             f.write(new_content)
         print(f"[aerium] [SUCCESS] {desc} in {p}")
         return True
+    except SystemExit:
+        raise
     except Exception as e:
-        print(f"[ERROR] [aerium] Failed {desc} in {p}: {e}")
+        print(f"[FATAL] [aerium] Exception in {desc} for {p}: {e}")
         traceback.print_exc()
-        return False
+        sys.exit(1)
 
 # --- Step B: Inject Strings into android_chrome_strings.grd ---
-grd_path = "chrome/browser/ui/android/strings/android_chrome_strings.grd"
+grd_path = find_canonical_file("android_chrome_strings.grd", path_hint=os.path.join("chrome", "browser", "ui", "android", "strings"))
 def inject_strings(c):
     if "IDS_AERIUM_TAB_SWITCHER_LAYOUT_TITLE" in c:
-        return c
+        return (c, True)
     new_strings = """
       <!-- Aerium Tab Switcher Layout Options -->
       <message name="IDS_AERIUM_TAB_SWITCHER_LAYOUT_TITLE" desc="Title for tab switcher layout preference.">
@@ -758,17 +797,27 @@ def inject_strings(c):
     m = re.search(r'<messages[^>]*>', c)
     if m:
         idx = m.end()
-        return c[:idx] + new_strings + c[idx:]
+        return (c[:idx] + new_strings + c[idx:], False)
     return None
 patch_file(grd_path, "strings injection", inject_strings)
 
-# --- Step C: Create arrays.xml for the ListPreference ---
-try:
-    arrays_xml_path = "chrome/android/java/res/values/aerium_tab_switcher_arrays.xml"
-    os.makedirs(os.path.dirname(arrays_xml_path), exist_ok=True)
-    with open(arrays_xml_path, "w", encoding="utf-8") as f:
-        f.write("""<?xml version="1.0" encoding="utf-8"?>
-<resources>
+# --- Step C: Cleanly inject string-arrays into arrays.xml or values.xml ---
+# Intentionally checks the canonical Android resource directory directly to guarantee 100% GN build inclusion.
+target_res_xml = None
+for candidate in ["chrome/android/java/res/values/arrays.xml", "chrome/android/java/res/values/values.xml"]:
+    if os.path.exists(candidate):
+        target_res_xml = candidate
+        break
+
+if not target_res_xml:
+    print("[FATAL] [aerium] Neither arrays.xml nor values.xml found under chrome/android/java/res/values!")
+    sys.exit(1)
+
+def inject_arrays(c):
+    if "aerium_tab_switcher_entries" in c:
+        return (c, True)
+    arrays_snippet = """
+    <!-- Aerium Tab Switcher Preference Arrays -->
     <string-array name="aerium_tab_switcher_entries">
         <item>@string/aerium_tab_switcher_grid</item>
         <item>@string/aerium_tab_switcher_vertical_with_groups</item>
@@ -779,18 +828,17 @@ try:
         <item>1</item>
         <item>2</item>
     </string-array>
-</resources>
-""")
-    print(f"[aerium] [SUCCESS] Created {arrays_xml_path}")
-except Exception as e:
-    print(f"[ERROR] [aerium] Failed creating {arrays_xml_path}: {e}")
-    traceback.print_exc()
+"""
+    if "</resources>" in c:
+        return (c.replace("</resources>", arrays_snippet + "\n</resources>", 1), False)
+    return None
+patch_file(target_res_xml, f"preference arrays injection into {target_res_xml}", inject_arrays)
 
 # --- Step D: Inject ListPreference into tabs_settings.xml ---
-tabs_settings_path = "chrome/android/java/res/xml/tabs_settings.xml"
+settings_path = find_canonical_file("tabs_settings.xml", path_hint=os.path.join("chrome", "android", "java", "res", "xml"))
 def inject_pref(c):
     if 'android:key="aerium_tab_switcher_mode"' in c:
-        return c
+        return (c, True)
     pref_item = """
     <org.chromium.components.browser_ui.settings.ChromeBaseListPreference
         android:key="aerium_tab_switcher_mode"
@@ -802,14 +850,15 @@ def inject_pref(c):
         app:useSimpleSummaryProvider="true" />
 """
     if "</PreferenceScreen>" in c:
-        return c.replace("</PreferenceScreen>", pref_item + "\n</PreferenceScreen>", 1)
-    return c + pref_item
-patch_file(tabs_settings_path, "preference xml injection", inject_pref)
+        return (c.replace("</PreferenceScreen>", pref_item + "\n</PreferenceScreen>", 1), False)
+    return None
+patch_file(settings_path, "preference xml injection", inject_pref)
 
 # --- Step E: Patch TabUiFeatureUtilities.java ---
+util_path = find_canonical_file("TabUiFeatureUtilities.java", path_hint=os.path.join("tasks", "tab_management"))
 def patch_util(c):
     if "getAeriumTabSwitcherMode" in c:
-        return c
+        return (c, True)
     methods = """
     public static final String AERIUM_TAB_SWITCHER_MODE_KEY = "aerium_tab_switcher_mode";
 
@@ -833,53 +882,172 @@ def patch_util(c):
 """
     idx = c.rfind("}")
     if idx != -1:
-        return c[:idx] + "\n" + methods + "\n}\n"
+        return (c[:idx] + "\n" + methods + "\n}\n", False)
     return None
+patch_file(util_path, "TabUiFeatureUtilities helpers", patch_util)
 
-for p in glob.glob("**/TabUiFeatureUtilities.java", recursive=True):
-    if "out" in p: continue
-    patch_file(p, "TabUiFeatureUtilities helpers", patch_util)
+# --- Step F: Create ClassicStackLayoutManager.java ---
+coord_path = find_canonical_file("TabListCoordinator.java", path_hint=os.path.join("tasks", "tab_management"))
+stack_lm_path = os.path.join(os.path.dirname(coord_path), "ClassicStackLayoutManager.java")
 
-# --- Step F: Patch TabListCoordinator.java ---
-def patch_coord(c):
-    # 1. Disable UI grouping if Mode 2 is selected (forces TabListLayoutType.FLAT)
-    clean_target = "int layoutType = actionOnRelatedTabs ? TabListLayoutType.GROUPED : TabListLayoutType.FLAT;"
-    if clean_target in c:
-        c = c.replace(clean_target, "int layoutType = (actionOnRelatedTabs && !TabUiFeatureUtilities.isTabGroupDisabledForVerticalStack()) ? TabListLayoutType.GROUPED : TabListLayoutType.FLAT;", 1)
+with open(stack_lm_path, "w", encoding="utf-8") as f:
+    f.write("""// Copyright 2026 The Chromium Authors
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
+package org.chromium.chrome.browser.tasks.tab_management;
+
+import android.content.Context;
+import android.view.View;
+import androidx.recyclerview.widget.LinearLayoutManager;
+import androidx.recyclerview.widget.RecyclerView;
+
+/**
+ * Recreates the authentic Chromium 88 OverlappingStack 3D perspective and card cascade.
+ * Cards cascade backward with 8.5 degree tilt, overlapping headers, and top-edge compression.
+ */
+public class ClassicStackLayoutManager extends LinearLayoutManager {
+    private static final float SCALE_AMOUNT = 0.90f;
+    private static final float TILT_ANGLE_DEGREES = 8.5f;
+    private static final int MAX_STACKED_TABS_TOP = 3;
+    private static final int PEEK_HEADER_DP = 72;
     
-    # 2. Modify updateGridCardLayout for vertical stack card height
-    old_update = "mMediator.setDefaultGridCardSize(newDefaultSize);"
-    if old_update in c and "isVerticalStackSelected" not in c:
-        new_update = """if (TabUiFeatureUtilities.isVerticalStackSelected()) {
-            int verticalCardHeightPx = Math.min((int)(cardWidthPx * 0.65f), (int)(viewWidth * 0.65f));
-            newDefaultSize = new Size(cardWidthPx, verticalCardHeightPx);
+    private final float mDensity;
+    private final int mPeekHeaderPx;
+
+    public ClassicStackLayoutManager(Context context) {
+        super(context, LinearLayoutManager.VERTICAL, false);
+        mDensity = context.getResources().getDisplayMetrics().density;
+        mPeekHeaderPx = (int) (PEEK_HEADER_DP * mDensity);
+    }
+
+    @Override
+    public void onLayoutChildren(RecyclerView.Recycler recycler, RecyclerView.State state) {
+        super.onLayoutChildren(recycler, state);
+        applyClassic3DStackTransformations();
+    }
+
+    @Override
+    public int scrollVerticallyBy(int dy, RecyclerView.Recycler recycler, RecyclerView.State state) {
+        int scrolled = super.scrollVerticallyBy(dy, recycler, state);
+        applyClassic3DStackTransformations();
+        return scrolled;
+    }
+
+    private void applyClassic3DStackTransformations() {
+        int childCount = getChildCount();
+        if (childCount == 0) return;
+
+        int parentTop = getPaddingTop();
+
+        for (int i = 0; i < childCount; i++) {
+            View child = getChildAt(i);
+            if (child == null) continue;
+
+            int position = getPosition(child);
+            float viewTop = child.getTop();
+
+            // 1. Z-Elevation: Higher positions tuck underneath front card
+            float elevation = Math.max(1.0f, 60.0f - (position * 2.5f));
+            child.setElevation(elevation);
+
+            // 2. 3D Perspective Tilt: Pivots along the top header bar
+            child.setCameraDistance(mDensity * 10000.0f);
+            child.setPivotX(child.getWidth() / 2.0f);
+            child.setPivotY(0.0f);
+            child.setRotationX(TILT_ANGLE_DEGREES);
+
+            // 3. Floating Card Deck 90% Scale
+            child.setScaleX(SCALE_AMOUNT);
+            child.setScaleY(SCALE_AMOUNT);
+
+            // 4. Overlapping Cascade: Shift card up so only header peeks out
+            if (position > 0) {
+                int childHeight = child.getHeight();
+                if (childHeight > mPeekHeaderPx) {
+                    float overlapShift = -(childHeight - mPeekHeaderPx) * position;
+                    child.setTranslationY(overlapShift);
+                }
+            }
+
+            // 5. Top Stack Compression: Clamps cards when reaching the top screen border
+            if (viewTop < parentTop) {
+                float offset = parentTop - viewTop;
+                int stackRank = Math.min(position, MAX_STACKED_TABS_TOP);
+                float compressionOffset = stackRank * (10.0f * mDensity);
+                child.setTranslationY(child.getTranslationY() + offset + compressionOffset);
+            }
+        }
+    }
+}
+""")
+print(f"[aerium] [SUCCESS] Created {stack_lm_path}")
+
+# --- Step G: Patch TabListCoordinator.java (Verified 3/3 Regex Substitutions) ---
+def patch_coord(c):
+    if "ClassicStackLayoutManager" in c:
+        return (c, True)
+
+    # 1. Disable UI grouping if Mode 2 is selected (forces TabListLayoutType.FLAT)
+    pattern_layout = r'int\s+layoutType\s*=\s*actionOnRelatedTabs\s*\?\s*TabListLayoutType\.GROUPED\s*:\s*TabListLayoutType\.FLAT\s*;'
+    repl_layout = 'int layoutType = (actionOnRelatedTabs && !TabUiFeatureUtilities.isTabGroupDisabledForVerticalStack()) ? TabListLayoutType.GROUPED : TabListLayoutType.FLAT;'
+    c, n1 = re.subn(pattern_layout, repl_layout, c, count=1)
+    if n1 != 1:
+        print(f"[FATAL] Sub-patch 1 (layoutType) failed in TabListCoordinator!")
+        return None
+
+    # 2. Attach ClassicStackLayoutManager & disable clipping on the RecyclerView
+    pattern_rv = r'mRecyclerView\.setLayoutManager\(\s*gridLayoutManager\s*\);'
+    repl_rv = """if (TabUiFeatureUtilities.isVerticalStackSelected()) {
+            ClassicStackLayoutManager stackManager = new ClassicStackLayoutManager(mRecyclerView.getContext());
+            mRecyclerView.setLayoutManager(stackManager);
+            mRecyclerView.setClipChildren(false);
+            mRecyclerView.setClipToPadding(false);
+        } else {
+            mRecyclerView.setLayoutManager(gridLayoutManager);
+        }"""
+    c, n2 = re.subn(pattern_rv, repl_rv, c, count=1)
+    if n2 != 1:
+        print(f"[FATAL] Sub-patch 2 (setLayoutManager) failed in TabListCoordinator!")
+        return None
+
+    # 3. Card Height in updateGridCardLayout for substantial preview
+    pattern_size = r'mMediator\.setDefaultGridCardSize\(\s*newDefaultSize\s*\);'
+    repl_size = """if (TabUiFeatureUtilities.isVerticalStackSelected()) {
+            int classicCardHeightPx = (int)(mRecyclerView.getWidth() * 1.2f);
+            newDefaultSize = new Size(mRecyclerView.getWidth(), classicCardHeightPx);
         }
         mMediator.setDefaultGridCardSize(newDefaultSize);"""
-        c = c.replace(old_update, new_update, 1)
-    return c
+    c, n3 = re.subn(pattern_size, repl_size, c, count=1)
+    if n3 != 1:
+        print(f"[FATAL] Sub-patch 3 (setDefaultGridCardSize) failed in TabListCoordinator!")
+        return None
 
-for p in glob.glob("**/TabListCoordinator.java", recursive=True):
-    if "out" in p: continue
-    patch_file(p, "TabListCoordinator layout sizing", patch_coord)
+    return (c, False)
 
-# --- Step G: Patch TabListMediator.java (spanCount = 1 in vertical mode) ---
+patch_file(coord_path, "TabListCoordinator layout & manager setup", patch_coord)
+
+# --- Step H: Patch TabListMediator.java (spanCount = 1 in vertical mode) ---
+mediator_path = find_canonical_file("TabListMediator.java", path_hint=os.path.join("tasks", "tab_management"))
 def patch_mediator(c):
-    old_span = "int getSpanCount(int screenWidthDp) {"
-    if old_span in c and "isVerticalStackSelected" not in c:
-        new_span = """int getSpanCount(int screenWidthDp) {
+    if "isVerticalStackSelected" in c:
+        return (c, True)
+    pattern_span = r'int\s+getSpanCount\s*\(\s*int\s+screenWidthDp\s*\)\s*\{'
+    repl_span = """int getSpanCount(int screenWidthDp) {
         if (TabUiFeatureUtilities.isVerticalStackSelected()) {
             return 1;
         }"""
-        return c.replace(old_span, new_span, 1)
-    return c
+    c, n = re.subn(pattern_span, repl_span, c, count=1)
+    if n != 1:
+        print(f"[FATAL] SpanCount override failed in TabListMediator!")
+        return None
+    return (c, False)
 
-for p in glob.glob("**/TabListMediator.java", recursive=True):
-    if "out" in p: continue
-    patch_file(p, "TabListMediator span count override", patch_mediator)
+patch_file(mediator_path, "TabListMediator span count override", patch_mediator)
 
 EOF
 
-# Invalidate intermediate javac jars to force recompilation of the patched UI
+# Invalidate intermediate javac jars to force clean recompilation
 find . -path "*/obj/chrome/android/features/tab_ui/*" -name "*.jar" -delete 2>/dev/null || true
 find . -path "*/obj/chrome/android/chrome_java/*" -name "*.jar" -delete 2>/dev/null || true
 
