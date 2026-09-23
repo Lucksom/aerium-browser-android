@@ -1,10 +1,5 @@
 #!/bin/bash
 
-# Safely reclaim ~30GB on GitHub Actions runner root disk (/dev/root)
-sudo rm -rf /opt/hostedtoolcache 2>/dev/null || true
-sudo apt-get clean 2>/dev/null || true
-sudo docker system prune -af --volumes 2>/dev/null || true
-
 # ==============================================================================
 # [01] INITIALIZATION & SAFE SED MTIME WRAPPER
 # ==============================================================================
