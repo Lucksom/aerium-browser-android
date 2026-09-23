@@ -35,13 +35,13 @@ jobs:
           )
           echo "=========================================================="
           for cls in "${CLASSES[@]}"; do
-            matches=$(grep -E "/${cls}\.java$" /tmp/all_paths.txt)
+            matches=$(grep -E "/${cls}\.java$" /tmp/all_paths.txt || true)
             if [ -n "$matches" ]; then
               echo "FOUND: $cls"
               echo "$matches" | sed 's/^/    -> /'
             else
               echo "NOT_FOUND (exact): $cls -- trying fuzzy match..."
-              fuzzy=$(grep -iE "${cls}" /tmp/all_paths.txt | grep '\.java$' | head -5)
+              fuzzy=$(grep -iE "${cls}" /tmp/all_paths.txt | grep '\.java$' | head -5 || true)
               if [ -n "$fuzzy" ]; then
                 echo "  possible renames/relocations:"
                 echo "$fuzzy" | sed 's/^/    ? /'
