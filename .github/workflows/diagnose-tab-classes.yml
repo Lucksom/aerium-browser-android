@@ -1,4 +1,23 @@
-- name: Sparse partial clone of relevant trees
+name: Diagnose Tab Classes
+
+on:
+  workflow_dispatch:
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Resolve Chromium version
+        run: |
+          VERSION=$(grep -m1 -o '[0-9]\+\(\.[0-9]\+\)\{3\}' vanadium/args.gn)
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "Resolved Chromium version: $VERSION"
+
+      - name: Sparse partial clone of relevant trees
         run: |
           git clone --filter=blob:none --sparse --no-checkout --depth 1 \
             --branch "$VERSION" \
