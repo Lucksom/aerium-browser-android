@@ -834,8 +834,11 @@ def inject_arrays(c):
     return None
 patch_file(target_res_xml, f"preference arrays injection into {target_res_xml}", inject_arrays)
 
-# --- Step D: Inject ListPreference into tabs_settings.xml ---
-settings_path = find_canonical_file("tabs_settings.xml", path_hint=os.path.join("chrome", "android", "java", "res", "xml"))
+# --- Step D: Inject ListPreference into tabs_settings.xml (Exact Path from Chromium 153) ---
+settings_path = "chrome/android/features/tab_ui/java/res/xml/tabs_settings.xml"
+if not os.path.exists(settings_path):
+    settings_path = find_canonical_file("tabs_settings.xml")
+
 def inject_pref(c):
     if 'android:key="aerium_tab_switcher_mode"' in c:
         return (c, True)
