@@ -1,51 +1,31 @@
-name: Diagnose Tab Classes
-
-on:
-  workflow_dispatch:
-
-jobs:
-  diagnose:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: true
-
-      - name: Resolve Chromium version
-        run: |
-          VERSION=$(grep -m1 -o '[0-9]\+\(\.[0-9]\+\)\{3\}' vanadium/args.gn)
-          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
-          echo "Resolved Chromium version: $VERSION"
-
-      - name: Sparse partial clone of chrome/ only
+- name: Sparse partial clone of relevant trees
         run: |
           git clone --filter=blob:none --sparse --no-checkout --depth 1 \
             --branch "$VERSION" \
             https://chromium.googlesource.com/chromium/src.git chromium-src
           cd chromium-src
-          git sparse-checkout set chrome/android chrome/browser/compositor chrome/browser/flags
+          git sparse-checkout set \
+            chrome/android \
+            chrome/browser/compositor \
+            chrome/browser/flags \
+            chrome/browser/tabmodel \
+            chrome/browser/browser_controls \
+            chrome/browser/tab \
+            ui/android \
+            components/browser_ui
           git checkout "$VERSION"
 
       - name: Search for tab classes
         working-directory: chromium-src
         run: |
-          echo "=========================================================="
-          echo "Searching for tab classes at Chromium $VERSION..."
-          echo "=========================================================="
           CLASSES=(
-            LayerTitleCache TabContentManager TabModelSelectorTabModelObserver
-            TabModelObserver TabModelUtils ResourceManager SceneLayer
-            TabListSceneLayer CompositorAnimator FloatProperty EventFilter
-            GestureEventFilter GestureHandler BrowserControlsStateProvider
-            BrowserControlsUtils LayoutRenderHost LayoutUpdateHost LayoutTab
-            LayoutManager LayoutManagerChromePhone Layout
+            TabContentManager TabModelSelectorTabModelObserver TabModelObserver
+            TabModelUtils ResourceManager SceneLayer TabListSceneLayer
+            CompositorAnimator FloatProperty EventFilter GestureEventFilter
+            GestureHandler BrowserControlsStateProvider BrowserControlsUtils
+            LayoutManager
           )
           for cls in "${CLASSES[@]}"; do
-            f=$(find chrome -name "${cls}.java" 2>/dev/null | head -1)
+            f=$(find . -name "${cls}.java" 2>/dev/null | head -1)
             [ -n "$f" ] && echo "FOUND: $cls -> $f" || echo "NOT_FOUND: $cls"
           done
-          echo "=========================================================="
-          grep -rn "HORIZONTAL_TAB_SWITCHER_ANDROID" \
-            chrome/browser/flags/android/chrome_feature_list.cc \
-            chrome/android/java/src/org/chromium/chrome/browser/flags/ChromeFeatureList.java \
-            2>/dev/null || echo "HORIZONTAL_TAB_SWITCHER_ANDROID: not found in either file"
