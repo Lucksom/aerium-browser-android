@@ -1,10 +1,10 @@
-name: Diagnose Tab Classes
+name: Inspect Layout Contract
 
 on:
   workflow_dispatch:
 
 jobs:
-  diagnose:
+  inspect:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -15,38 +15,36 @@ jobs:
         run: |
           VERSION=$(grep -m1 -o '[0-9]\+\(\.[0-9]\+\)\{3\}' vanadium/args.gn)
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
-          echo "Resolved Chromium version: $VERSION"
 
-      - name: Partial clone (tree metadata only, no blobs)
+      - name: Partial clone (tree metadata only)
         run: |
           git clone --filter=blob:none --no-checkout --depth 1 \
             --branch "$VERSION" \
             https://chromium.googlesource.com/chromium/src.git chromium-src
-          cd chromium-src
-          git ls-tree -r --name-only "$VERSION" > /tmp/all_paths.txt
-          wc -l /tmp/all_paths.txt
 
-      - name: Search for tab classes across entire tree
+      - name: Fetch and inspect key files on demand
+        working-directory: chromium-src
         run: |
-          CLASSES=(
-            TabContentManager SceneLayer TabListSceneLayer CompositorAnimator
-            FloatProperty EventFilter GestureEventFilter GestureHandler
-            LayoutManager
-          )
-          echo "=========================================================="
-          for cls in "${CLASSES[@]}"; do
-            matches=$(grep -E "/${cls}\.java$" /tmp/all_paths.txt || true)
-            if [ -n "$matches" ]; then
-              echo "FOUND: $cls"
-              echo "$matches" | sed 's/^/    -> /'
-            else
-              echo "NOT_FOUND (exact): $cls -- trying fuzzy match..."
-              fuzzy=$(grep -iE "${cls}" /tmp/all_paths.txt | grep '\.java$' | head -5 || true)
-              if [ -n "$fuzzy" ]; then
-                echo "  possible renames/relocations:"
-                echo "$fuzzy" | sed 's/^/    ? /'
-              else
-                echo "  NOTHING MATCHING '$cls' ANYWHERE IN THE TREE -- likely deleted"
-              fi
+          show() {
+            echo "===== $1 ====="
+            git show "$VERSION:$1" 2>/dev/null || echo "!!! could not fetch $1"
+          }
+
+          echo "### Layout.java: how does it wire up a scene layer? ###"
+          show chrome/browser/ui/android/layouts/java/src/org/chromium/chrome/browser/layouts/Layout.java \
+            | grep -n -B2 -A5 -i "scenelayer\|getSceneLayer"
+
+          echo
+          echo "### EventFilter.java: current touch-callback contract ###"
+          show chrome/browser/ui/android/layouts/java/src/org/chromium/chrome/browser/layouts/EventFilter.java \
+            | grep -n -B1 -A3 "void \|boolean \|interface \|abstract "
+
+          echo
+          echo "### Any class still implementing pinch/fling/onLongPress-style callbacks? ###"
+          git ls-tree -r --name-only "$VERSION" > /tmp/all_paths.txt
+          grep -E "layouts/.*\.java$" /tmp/all_paths.txt | while read -r f; do
+            content=$(git show "$VERSION:$f" 2>/dev/null)
+            if echo "$content" | grep -q "onPinch\|onLongPress.*float.*float"; then
+              echo "MATCH: $f"
             fi
           done
