@@ -1375,24 +1375,18 @@ find . \( -path ./out -o -path ./.git -o -path ./third_party/llvm-build \) -prun
 echo "======================================"
 
 # ==============================================================================
-# [38] EARLY COMPILATION DIAGNOSTIC TARGETS (FAIL-SAFE & FAST)
+# [38] EARLY COMPILATION DIAGNOSTIC TARGETS (FAST & FAIL-SAFE)
 # ==============================================================================
-echo "==> [38] Preparing early compilation diagnostics..."
-
-# Ensure depot_tools is cleanly on PATH
-export PATH="$PATH:$GITHUB_WORKSPACE/chromium/depot_tools:$GITHUB_WORKSPACE/depot_tools"
-
 for outdir in "out/Default" "chromium/src/out/Default"; do
   if [ -f "$outdir/build.ninja" ]; then
     echo "==> Running early compilation diagnostic in $outdir..."
+    export PATH="$PATH:$GITHUB_WORKSPACE/chromium/depot_tools:$GITHUB_WORKSPACE/depot_tools"
     
-    # 1. Direct, instant command check (NO recursive find crawls)
     if ! command -v autoninja >/dev/null 2>&1; then
-      echo "[aerium] autoninja not found on PATH, safely skipping early diagnostic"
+      echo "[aerium] autoninja not found on PATH, skipping diagnostic"
       break
     fi
     
-    # 2. Diagnostic targets
     DIAG_TARGETS=(
       obj/chrome/browser/ui/webui/configs/chrome_web_ui_configs.o
       obj/chrome/browser/glic/impl/glic_web_client_handler.o
@@ -1402,36 +1396,17 @@ for outdir in "out/Default" "chromium/src/out/Default"; do
       obj/chrome/browser/ui/android/extensions/extensions/extension_install_dialog_view_android.o
     )
     
-    # Filter targets to only those present in ninja graph
-    VALID_TARGETS=()
-    for t in "${DIAG_TARGETS[@]}"; do
-      if grep -q "$t" "$outdir/build.ninja" 2>/dev/null; then
-        VALID_TARGETS+=("$t")
-      fi
-    done
-    
-    if [ ${#VALID_TARGETS[@]} -eq 0 ]; then
-      echo "[aerium] Diagnostic targets not yet in ninja graph, skipping."
-      break
-    fi
-    
-    echo "[aerium] Testing ${#VALID_TARGETS[@]} diagnostic target(s)..."
-    
-    # Run directly without bash wrapper, keep alive with output
-    if ! autoninja -k 0 -C "$outdir" "${VALID_TARGETS[@]}"; then
+    autoninja -k 0 -C "$outdir" "${DIAG_TARGETS[@]}" || {
       echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
       echo "[aerium] Diagnostic failed: one or more targets failed to compile."
       echo "Aborting early to prevent waiting through the full build queue."
       echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
       exit 1
-    fi
-    
-    echo "==> [SUCCESS] All diagnostic targets compiled cleanly!"
+    }
+    echo "==> [SUCCESS] All diagnostic targets compiled successfully!"
     break
   fi
 done
-
-  
 
 # ==============================================================================
 # [39] PERSISTENT NOTIFICATION HANDLER ISOLATION
