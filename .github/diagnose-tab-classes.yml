@@ -1,0 +1,68 @@
+name: Diagnose Chromium 153 Tab Classes & API Drift
+
+on:
+  workflow_dispatch: # Allows manual trigger from the GitHub Actions UI tab
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Locate Workspace & Find Classes
+        run: |
+          echo "=========================================================="
+          echo "SEARCHING FOR CHROMIUM 153 SYMBOLS & FILES"
+          echo "=========================================================="
+
+          # Check common directories where Chromium source might be checked out
+          SRC_DIR="."
+          if [ -d "chromium/src" ]; then
+            SRC_DIR="chromium/src"
+          elif [ -d "src" ]; then
+            SRC_DIR="src"
+          fi
+
+          echo "Using source directory: $SRC_DIR"
+
+          CLASSES=(
+            "LayerTitleCache"
+            "TabContentManager"
+            "TabModelSelectorTabModelObserver"
+            "TabModelObserver"
+            "TabModelUtils"
+            "ResourceManager"
+            "SceneLayer"
+            "TabListSceneLayer"
+            "CompositorAnimator"
+            "FloatProperty"
+            "EventFilter"
+            "GestureEventFilter"
+            "GestureHandler"
+            "BrowserControlsStateProvider"
+            "BrowserControlsUtils"
+            "LayoutRenderHost"
+            "LayoutUpdateHost"
+            "LayoutTab"
+            "LayoutManager"
+            "LayoutManagerChromePhone"
+            "Layout"
+          )
+
+          for cls in "${CLASSES[@]}"; do
+            f=$(find "$SRC_DIR/chrome" "$SRC_DIR/components" "$SRC_DIR/ui" -name "${cls}.java" 2>/dev/null | head -1)
+            if [ -n "$f" ]; then
+              # Extract the package statement from the Java file
+              pkg=$(grep -m1 "^package " "$f" 2>/dev/null | sed -e 's/package //;s/;//')
+              echo "FOUND: $cls -> package $pkg ($f)"
+            else
+              echo "NOT_FOUND: $cls"
+            fi
+          done
+
+          echo "=========================================================="
+          echo "CHECKING TAB_SWITCHER FLAGS IN CHROMIUM 153"
+          echo "=========================================================="
+          grep -rn "HORIZONTAL_TAB_SWITCHER_ANDROID" "$SRC_DIR/chrome/browser/flags/" "$SRC_DIR/chrome/android/" 2>/dev/null || echo "Flag HORIZONTAL_TAB_SWITCHER_ANDROID does not exist (Safe to delete/ignore)."
+          grep -rn "GRID_TAB_SWITCHER" "$SRC_DIR/chrome/browser/flags/" "$SRC_DIR/chrome/android/" 2>/dev/null | head -5 || true
