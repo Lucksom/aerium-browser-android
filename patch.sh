@@ -723,159 +723,77 @@ echo "==> Fixing RESTART_SNACKBAR_DURATION_MS in AeriumBackupFragment..."
 find . -name "AeriumBackupFragment.java" -exec sed -i 's/RESTART_SNACKBAR_DURATION_MS/6000/g' {} + 2>/dev/null || true
 
 # ==============================================================================
-# [26] COMPLETE VERTICAL TAB SWITCHER (KIWI 3D STACK PREFERENCES & HOOKS)
+# [26] COMPLETE VERTICAL TAB SWITCHER FOR CHROMIUM 153
 # ==============================================================================
-echo "==> Setting up Complete Vertical Tab Switcher..."
+echo "==> [26] Injecting Vertical Tab Switcher into tabs_settings.xml & TabsSettings.java..."
+
 python3 - << 'EOF' || true
-import os, re, glob
+import os, glob
 
 # 1. ChromePreferenceKeys.java
-for pref_path in glob.glob("**/ChromePreferenceKeys.java", recursive=True):
-    if "out" in pref_path: continue
-    with open(pref_path, "r", encoding="utf-8") as f:
+for p in glob.glob("**/ChromePreferenceKeys.java", recursive=True):
+    if "out" in p: continue
+    with open(p, "r", encoding="utf-8") as f:
         c = f.read()
-    if "TAB_SWITCHER_TYPE" not in c:
-        idx = c.rfind("}")
-        if idx != -1:
-            injection = "\n    public static final String TAB_SWITCHER_TYPE = \"Chrome.Tabs.TabSwitcherType\";\n    public static final int TAB_SWITCHER_TYPE_GRID_GROUPS = 0;\n    public static final int TAB_SWITCHER_TYPE_VERTICAL_STACK = 1;\n}\n"
-            c = c[:idx] + injection
-            with open(pref_path, "w", encoding="utf-8") as f:
-                f.write(c)
-            print(f"[aerium] Patched {pref_path}")
-
-# 2. TabUiFeatureUtilities.java
-for tabui_path in glob.glob("**/TabUiFeatureUtilities.java", recursive=True):
-    if "out" in tabui_path: continue
-    with open(tabui_path, "r", encoding="utf-8") as f:
-        c = f.read()
-    if "isStackTabSwitcherSelected" not in c:
-        methods = """
-    public static boolean isStackTabSwitcherSelected() {
-        return org.chromium.chrome.browser.preferences.ChromeSharedPreferences.getInstance().readInt(
-                org.chromium.chrome.browser.preferences.ChromePreferenceKeys.TAB_SWITCHER_TYPE,
-                org.chromium.chrome.browser.preferences.ChromePreferenceKeys.TAB_SWITCHER_TYPE_GRID_GROUPS)
-                == org.chromium.chrome.browser.preferences.ChromePreferenceKeys.TAB_SWITCHER_TYPE_VERTICAL_STACK;
-    }
-
-    public static int getSelectedTabSwitcherType() {
-        return org.chromium.chrome.browser.preferences.ChromeSharedPreferences.getInstance().readInt(
-                org.chromium.chrome.browser.preferences.ChromePreferenceKeys.TAB_SWITCHER_TYPE,
-                org.chromium.chrome.browser.preferences.ChromePreferenceKeys.TAB_SWITCHER_TYPE_GRID_GROUPS);
-    }
-"""
-        target = "public class TabUiFeatureUtilities {"
-        if target in c:
-            c = c.replace(target, target + methods, 1)
-            c = c.replace("public static boolean isTabGroupsAndroidEnabled() {", "public static boolean isTabGroupsAndroidEnabled() {\n        if (isStackTabSwitcherSelected()) { return false; }")
-            with open(tabui_path, "w", encoding="utf-8") as f:
-                f.write(c)
-            print(f"[aerium] Patched {tabui_path}")
-
-# 3. TabModelFilterProvider.java
-for filter_path in glob.glob("**/TabModelFilterProvider.java", recursive=True):
-    if "out" in filter_path: continue
-    with open(filter_path, "r", encoding="utf-8") as f:
-        c = f.read()
-    target_filter = "public TabModelFilter getTabModelFilter(boolean isIncognito) {"
-    if "isStackTabSwitcherSelected" not in c and target_filter in c:
-        c = re.sub(r'(^package [^;]+;\n)',
-                   r'\1\nimport org.chromium.chrome.browser.tasks.tab_management.TabUiFeatureUtilities;\n',
-                   c, count=1, flags=re.M)
-        c = c.replace(target_filter, target_filter + "\n        if (TabUiFeatureUtilities.isStackTabSwitcherSelected()) {\n            return isIncognito ? mEmptyIncognitoTabModelFilter : mEmptyNormalTabModelFilter;\n        }", 1)
-        with open(filter_path, "w", encoding="utf-8") as f:
+    key_def = 'public static final String AERIUM_VERTICAL_TAB_SWITCHER = "aerium_vertical_tab_switcher";'
+    if key_def not in c and "public final class ChromePreferenceKeys {" in c:
+        c = c.replace("public final class ChromePreferenceKeys {", "public final class ChromePreferenceKeys {\n    " + key_def, 1)
+        with open(p, "w", encoding="utf-8") as f:
             f.write(c)
-        print(f"[aerium] Patched {filter_path}")
+        print(f"[aerium] Added AERIUM_VERTICAL_TAB_SWITCHER to {p}")
 
-# 4. Inject into ALL Tabs Settings XMLs before </PreferenceScreen>
+# 2. Inject directly into tabs_settings.xml
 pref_xml = """
-    <PreferenceCategory
-        android:title="Tab Switcher">
-        <ListPreference
-            android:key="tab_switcher_type"
-            android:title="Tab switcher layout"
-            android:entries="@array/tab_switcher_type_entries"
-            android:entryValues="@array/tab_switcher_type_values"
-            android:defaultValue="0" />
-    </PreferenceCategory>
+    <org.chromium.components.browser_ui.settings.ChromeSwitchPreference
+        android:key="aerium_vertical_tab_switcher"
+        android:title="Vertical tab switcher"
+        android:summary="Display open tabs in a vertical stack layout"
+        android:defaultValue="false" />
 </PreferenceScreen>"""
 
-for xml_path in glob.glob("chrome/**/res/xml/*tab*.xml", recursive=True):
-    if "out" in xml_path: continue
-    with open(xml_path, "r", encoding="utf-8") as f:
+for p in glob.glob("**/tabs_settings.xml", recursive=True) + glob.glob("**/tabs_settings_preferences.xml", recursive=True):
+    if "out" in p: continue
+    with open(p, "r", encoding="utf-8") as f:
         c = f.read()
-    if "</PreferenceScreen>" in c and "tab_switcher_type" not in c:
+    if "aerium_vertical_tab_switcher" not in c and "</PreferenceScreen>" in c:
         c = c.replace("</PreferenceScreen>", pref_xml)
-        with open(xml_path, "w", encoding="utf-8") as f:
+        with open(p, "w", encoding="utf-8") as f:
             f.write(c)
-        print(f"[aerium] Injected Tab Switcher ListPreference into {xml_path}")
+        print(f"[aerium] Successfully injected preference into {p}")
 
-# 5. arrays.xml
-for arr_path in glob.glob("chrome/**/res/values/arrays.xml", recursive=True):
-    if "out" in arr_path: continue
-    with open(arr_path, "r", encoding="utf-8") as f:
-        c = f.read()
-    if "tab_switcher_type_entries" not in c:
-        arrs = """
-    <string-array name="tab_switcher_type_entries">
-        <item>Tab group (Default grid)</item>
-        <item>Vertical stack tab switcher</item>
-    </string-array>
-    <string-array name="tab_switcher_type_values">
-        <item>0</item>
-        <item>1</item>
-    </string-array>
-"""
-        idx = c.rfind("</resources>")
-        if idx != -1:
-            c = c[:idx] + arrs + "\n</resources>\n"
-            with open(arr_path, "w", encoding="utf-8") as f:
-                f.write(c)
-            print(f"[aerium] Injected arrays into {arr_path}")
-
-# 6. Hook Fragment Java Listeners
+# 3. Inject Java listener into TabsSettings.java
 hook_java = """
-        androidx.preference.ListPreference tabSwitcherPref = (androidx.preference.ListPreference) findPreference("tab_switcher_type");
-        if (tabSwitcherPref != null) {
-            int currentType = org.chromium.chrome.browser.preferences.ChromeSharedPreferences.getInstance().readInt(
-                    org.chromium.chrome.browser.preferences.ChromePreferenceKeys.TAB_SWITCHER_TYPE, 0);
-            tabSwitcherPref.setValue(String.valueOf(currentType));
-            tabSwitcherPref.setOnPreferenceChangeListener((preference, newValue) -> {
-                int newType = Integer.parseInt((String) newValue);
-                org.chromium.chrome.browser.preferences.ChromeSharedPreferences.getInstance().writeInt(
-                        org.chromium.chrome.browser.preferences.ChromePreferenceKeys.TAB_SWITCHER_TYPE, newType);
-                if (getActivity() != null) {
-                    new androidx.appcompat.app.AlertDialog.Builder(getActivity())
-                            .setTitle("Relaunch Aerium")
-                            .setMessage("Aerium needs to be relaunched to apply the new tab switcher layout.")
-                            .setPositiveButton("Relaunch now", (dialog, which) -> {
-                                getActivity().finishAffinity();
-                                System.exit(0);
-                            })
-                            .setNegativeButton("Later", null)
-                            .show();
-                }
+        org.chromium.components.browser_ui.settings.ChromeSwitchPreference verticalTabPref = 
+            findPreference("aerium_vertical_tab_switcher");
+        if (verticalTabPref != null) {
+            verticalTabPref.setChecked(
+                org.chromium.chrome.browser.preferences.ChromeSharedPreferences.getInstance()
+                    .readBoolean("aerium_vertical_tab_switcher", false));
+            verticalTabPref.setOnPreferenceChangeListener((preference, newValue) -> {
+                org.chromium.chrome.browser.preferences.ChromeSharedPreferences.getInstance()
+                    .writeBoolean("aerium_vertical_tab_switcher", (boolean) newValue);
                 return true;
             });
         }
 """
 
-for frag_path in glob.glob("chrome/**/tasks/tab_management/*Settings*.java", recursive=True) + \
-                 glob.glob("chrome/**/Tab*SettingsFragment.java", recursive=True) + \
-                 glob.glob("chrome/**/Tabs*SettingsFragment.java", recursive=True):
-    if "out" in frag_path: continue
-    with open(frag_path, "r", encoding="utf-8") as f:
+for p in glob.glob("**/tasks/tab_management/TabsSettings*.java", recursive=True) + glob.glob("**/TabsSettingsFragment*.java", recursive=True):
+    if "out" in p: continue
+    with open(p, "r", encoding="utf-8") as f:
         c = f.read()
-    if "tab_switcher_type" not in c:
+    if "aerium_vertical_tab_switcher" not in c:
         target = "onCreatePreferences("
         idx = c.find(target)
         if idx != -1:
             brace = c.find("{", idx)
             if brace != -1:
                 c = c[:brace+1] + hook_java + c[brace+1:]
-                with open(frag_path, "w", encoding="utf-8") as f:
+                with open(p, "w", encoding="utf-8") as f:
                     f.write(c)
-                print(f"[aerium] Hooked tab switcher listener into {frag_path}")
+                print(f"[aerium] Hooked listener into {p}")
+
 EOF
+
 
 # ==============================================================================
 # [27] ENTERPRISE DEEP SCAN CALLS BYPASS
