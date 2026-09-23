@@ -1,0 +1,51 @@
+name: Diagnose Chromium 153 Tab Classes
+
+on:
+  workflow_dispatch:
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Search for Chromium 153 Tab Management Files
+        run: |
+          echo "=========================================================="
+          echo "Searching for tab classes in repository..."
+          echo "=========================================================="
+          
+          CLASSES=(
+            "LayerTitleCache"
+            "TabContentManager"
+            "TabModelSelectorTabModelObserver"
+            "TabModelObserver"
+            "TabModelUtils"
+            "ResourceManager"
+            "SceneLayer"
+            "TabListSceneLayer"
+            "CompositorAnimator"
+            "FloatProperty"
+            "EventFilter"
+            "GestureEventFilter"
+            "GestureHandler"
+            "BrowserControlsStateProvider"
+            "BrowserControlsUtils"
+            "LayoutRenderHost"
+            "LayoutUpdateHost"
+            "LayoutTab"
+            "LayoutManager"
+            "LayoutManagerChromePhone"
+            "Layout"
+          )
+
+          for cls in "${CLASSES[@]}"; do
+            f=$(find . -name "${cls}.java" 2>/dev/null | head -1)
+            if [ -n "$f" ]; then
+              echo "FOUND: $cls -> $f"
+            else
+              echo "NOT_FOUND: $cls"
+            fi
+          done
