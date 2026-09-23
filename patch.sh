@@ -386,7 +386,7 @@ sed -i '/"ExtensionsToolbarCoordinatorImpl.requestLayoutWithViewUtils()");$/a\if
 # ==============================================================================
 # [21] COMPLETE VERIFIED EXTENSION INSTALL DIALOG & JNI RESOLUTION
 # ==============================================================================
-echo "==> [21] Generating verified ExtensionInstallDialogViewAndroid & dumping full JNI headers..."
+echo "==> [21] Generating verified ExtensionInstallDialogViewAndroid & resolving JNI..."
 
 # 1. IncognitoUtils & Extension Host idempotent baseline
 python3 - << 'EOF' || true
@@ -403,6 +403,7 @@ if os.path.exists(p):
         c = c.replace(target, target + " " + inject, 1)
         with open(p, "w", encoding="utf-8") as f:
             f.write(c)
+        print("[aerium] IncognitoUtils.java verified")
 EOF
 
 # 2. Extension Host: Safe, idempotent SetPrimaryPageImportance
@@ -421,29 +422,15 @@ if os.path.exists(p):
             c = c.replace(target, target + "\n" + call, 1)
             with open(p, "w", encoding="utf-8") as f:
                 f.write(c)
+            print("[aerium] SetPrimaryPageImportance verified in extension_host.cc")
 EOF
 
 # 3. Touch security filter on ExtensionInstallDialogBridge.java
 sed -i 's|\.with(ModalDialogProperties.FILTER_TOUCH_FOR_SECURITY, true)|\.with(ModalDialogProperties.FILTER_TOUCH_FOR_SECURITY, false)|' chrome/browser/ui/android/extensions/java/src/org/chromium/chrome/browser/ui/extensions/ExtensionInstallDialogBridge.java 2>/dev/null || true
 
-# 4. Dump FULL ExtensionInstallDialogBridge.java & Generated JNI headers + write CC file
+# 4. Generate pristine extension_install_dialog_view_android.cc
 python3 - << 'EOF'
-import os, glob
-
-# 1. Dump FULL Java source
-java_path = "chrome/browser/ui/android/extensions/java/src/org/chromium/chrome/browser/ui/extensions/ExtensionInstallDialogBridge.java"
-if os.path.exists(java_path):
-    print("\n==================== ExtensionInstallDialogBridge.java (FULL) ====================")
-    with open(java_path, "r", encoding="utf-8", errors="ignore") as f:
-        print(f.read())
-    print("==================================================================================\n")
-
-# 2. Dump FULL JNI Header
-for p in glob.glob("out/Default/gen/jni_headers/**/ExtensionInstallDialogBridge*_jni.h", recursive=True) + glob.glob("gen/jni_headers/**/ExtensionInstallDialogBridge*_jni.h", recursive=True):
-    print(f"\n==================== JNI HEADER: {p} (FULL) ====================")
-    with open(p, "r", encoding="utf-8", errors="ignore") as f:
-        print(f.read())
-    print("==================================================================\n")
+import os
 
 p_cc = "chrome/browser/ui/android/extensions/extension_install_dialog_view_android.cc"
 
@@ -539,6 +526,9 @@ void ExtensionInstallDialogViewAndroid::BuildPropertyModel() {
 }
 
 }  // namespace extensions
+
+// Invoke the JNI Zero entrypoint generator macro
+DEFINE_JNI_FOR_ExtensionInstallDialogBridge()
 """
 
 with open(p_cc, "w", encoding="utf-8") as f:
@@ -549,7 +539,8 @@ EOF
 
 # Force recompile of object file
 find . -path "*/obj/chrome/browser/ui/android/extensions/extensions/extension_install_dialog_view_android.o" -delete 2>/dev/null || true
-                                      
+
+                                       
  
 # ==============================================================================
 # [22] CONTENT URI & DOCUMENT PATHS
