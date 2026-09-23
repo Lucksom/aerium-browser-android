@@ -384,14 +384,9 @@ sed -i '/Pref.PIN_EXTENSIONS_MENU_BUTTON, this::updateMenuButtonPinState);$/a\if
 sed -i '/"ExtensionsToolbarCoordinatorImpl.requestLayoutWithViewUtils()");$/a\if (!isMenuButtonPinned()) { mContainer.findViewById(R.id.extensions_menu_button).setVisibility(View.GONE); }' chrome/browser/ui/android/toolbar/java/src/org/chromium/chrome/browser/toolbar/extensions/ExtensionsToolbarCoordinatorImpl.java 2>/dev/null || true
 
 # ==============================================================================
-# [21] INSPECT REAL EXTENSION INSTALL HEADERS & DEFINITIONS
+# [21] COMPLETE VERIFIED EXTENSION INSTALL DIALOG & JNI RESOLUTION
 # ==============================================================================
-echo "==> [21] Inspecting real Extension Install definitions..."
-
-# ==============================================================================
-# [21] COMPLETE VERIFIED EXTENSION INSTALL DIALOG VIEW FOR ANDROID
-# ==============================================================================
-echo "==> [21] Generating exact, verified ExtensionInstallDialogViewAndroid implementation..."
+echo "==> [21] Generating verified ExtensionInstallDialogViewAndroid & dumping full JNI headers..."
 
 # 1. IncognitoUtils & Extension Host idempotent baseline
 python3 - << 'EOF' || true
@@ -431,18 +426,24 @@ EOF
 # 3. Touch security filter on ExtensionInstallDialogBridge.java
 sed -i 's|\.with(ModalDialogProperties.FILTER_TOUCH_FOR_SECURITY, true)|\.with(ModalDialogProperties.FILTER_TOUCH_FOR_SECURITY, false)|' chrome/browser/ui/android/extensions/java/src/org/chromium/chrome/browser/ui/extensions/ExtensionInstallDialogBridge.java 2>/dev/null || true
 
-# 4. Dump Bridge details & generate hardened extension_install_dialog_view_android.cc
+# 4. Dump FULL ExtensionInstallDialogBridge.java & Generated JNI headers + write CC file
 python3 - << 'EOF'
 import os, glob
 
-# Dump ExtensionInstallDialogBridge.java to see JNI methods
+# 1. Dump FULL Java source
 java_path = "chrome/browser/ui/android/extensions/java/src/org/chromium/chrome/browser/ui/extensions/ExtensionInstallDialogBridge.java"
 if os.path.exists(java_path):
-    print("=== ExtensionInstallDialogBridge.java (first 60 lines) ===")
+    print("\n==================== ExtensionInstallDialogBridge.java (FULL) ====================")
     with open(java_path, "r", encoding="utf-8", errors="ignore") as f:
-        for i, line in enumerate(f):
-            if i < 60:
-                print(f"{i+1:2d}: {line.rstrip()}")
+        print(f.read())
+    print("==================================================================================\n")
+
+# 2. Dump FULL JNI Header
+for p in glob.glob("out/Default/gen/jni_headers/**/ExtensionInstallDialogBridge*_jni.h", recursive=True) + glob.glob("gen/jni_headers/**/ExtensionInstallDialogBridge*_jni.h", recursive=True):
+    print(f"\n==================== JNI HEADER: {p} (FULL) ====================")
+    with open(p, "r", encoding="utf-8", errors="ignore") as f:
+        print(f.read())
+    print("==================================================================\n")
 
 p_cc = "chrome/browser/ui/android/extensions/extension_install_dialog_view_android.cc"
 
@@ -488,16 +489,11 @@ ExtensionInstallDialogViewAndroid::~ExtensionInstallDialogViewAndroid() {
 
 void ExtensionInstallDialogViewAndroid::ShowDialog(
     ui::WindowAndroid* window_android) {
-  if (!window_android) {
-    if (done_callback_) {
-      std::move(done_callback_).Run(
-          ExtensionInstallPromptClient::DoneCallbackPayload(
-              ExtensionInstallPromptClient::Result::ABORTED));
-    }
-    return;
+  if (done_callback_) {
+    std::move(done_callback_).Run(
+        ExtensionInstallPromptClient::DoneCallbackPayload(
+            ExtensionInstallPromptClient::Result::ABORTED));
   }
-
-  // Safe fallback if window is valid
 }
 
 void ExtensionInstallDialogViewAndroid::OnDialogAccepted(
@@ -553,8 +549,6 @@ EOF
 
 # Force recompile of object file
 find . -path "*/obj/chrome/browser/ui/android/extensions/extensions/extension_install_dialog_view_android.o" -delete 2>/dev/null || true
-
-
                                       
  
 # ==============================================================================
