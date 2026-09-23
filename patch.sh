@@ -697,61 +697,208 @@ echo "==> Fixing RESTART_SNACKBAR_DURATION_MS in AeriumBackupFragment..."
 find . -name "AeriumBackupFragment.java" -exec sed -i 's/RESTART_SNACKBAR_DURATION_MS/6000/g' {} + 2>/dev/null || true
 
 # ==============================================================================
-# [26] RESTORE CLEAN DEFAULT CHROMIUM 153 TAB GRID & GROUPS
+# [26] AERIUM CLASSIC VERTICAL STACK TAB SWITCHER & SETTINGS INJECTION
 # ==============================================================================
-echo "==> [26] Ripping out flat list overrides & restoring default Chromium 153 Tab Grid..."
+echo "==> [26] Injecting Vertical Stack Tab Switcher with Settings in Tabs and tab groups..."
 
-python3 - << 'EOF' || true
-import os, glob, re
+# --- Step A: Clean reset of files touched by previous failed attempts ---
+git checkout -- \
+  chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabUiFeatureUtilities.java \
+  chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabListCoordinator.java \
+  chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabListMediator.java \
+  chrome/android/java/src/org/chromium/chrome/browser/tabmodel/TabModelFilterProvider.java \
+  chrome/android/java/res/xml/tabs_settings.xml \
+  chrome/browser/ui/android/strings/android_chrome_strings.grd 2>/dev/null || true
 
-# 1. Clean TabModelFilterProvider.java
-for p in glob.glob("**/TabModelFilterProvider.java", recursive=True):
-    if "out" in p: continue
-    with open(p, "r", encoding="utf-8") as f:
-        c = f.read()
-    c = c.replace("import org.chromium.chrome.browser.tasks.tab_management.TabUiFeatureUtilities;\n", "")
-    c = re.sub(r'if\s*\([^)]*isStackTabSwitcherSelected[^)]*\)\s*\{[^}]*\}', '', c)
-    with open(p, "w", encoding="utf-8") as f:
-        f.write(c)
-    print(f"[aerium] Cleaned {p}")
+python3 - << 'EOF'
+import os, sys, traceback, glob
 
-# 2. Clean TabUiFeatureUtilities.java (ensure GRID mode is default, remove fake stack methods)
+def patch_file(p, desc, func):
+    if not os.path.exists(p):
+        print(f"[ERROR] [aerium] Target file not found for {desc}: {p}")
+        return False
+    try:
+        with open(p, "r", encoding="utf-8") as f:
+            content = f.read()
+        new_content = func(content)
+        if new_content is None or new_content == content:
+            print(f"[WARN] [aerium] No changes applied for {desc} in {p}")
+            return False
+        with open(p, "w", encoding="utf-8") as f:
+            f.write(new_content)
+        print(f"[aerium] [SUCCESS] {desc} in {p}")
+        return True
+    except Exception as e:
+        print(f"[ERROR] [aerium] Failed {desc} in {p}: {e}")
+        traceback.print_exc()
+        return False
+
+# --- Step B: Inject Strings & Array Resources into android_chrome_strings.grd ---
+grd_path = "chrome/browser/ui/android/strings/android_chrome_strings.grd"
+def inject_strings(c):
+    if "IDS_AERIUM_TAB_SWITCHER_LAYOUT_TITLE" in c:
+        return c
+    new_strings = """
+      <!-- Aerium Tab Switcher Layout Options -->
+      <message name="IDS_AERIUM_TAB_SWITCHER_LAYOUT_TITLE" desc="Title for tab switcher layout preference.">
+        Tab switcher layout
+      </message>
+      <message name="IDS_AERIUM_TAB_SWITCHER_LAYOUT_SUMMARY" desc="Summary for tab switcher layout preference.">
+        Choose how tabs are organized in the tab switcher
+      </message>
+      <message name="IDS_AERIUM_TAB_SWITCHER_GRID" desc="Option for modern grid tab switcher.">
+        Default (Grid)
+      </message>
+      <message name="IDS_AERIUM_TAB_SWITCHER_VERTICAL_WITH_GROUPS" desc="Option for classic vertical stack with groups.">
+        Classic Vertical Stack (with tab groups)
+      </message>
+      <message name="IDS_AERIUM_TAB_SWITCHER_VERTICAL_NO_GROUPS" desc="Option for classic vertical stack without groups.">
+        Classic Vertical Stack (without tab groups)
+      </message>
+"""
+    if "<messages>" in c:
+        return c.replace("<messages>", "<messages>" + new_strings, 1)
+    return None
+patch_file(grd_path, "strings injection", inject_strings)
+
+# --- Step C: Create arrays.xml for the ListPreference ---
+try:
+    arrays_xml_path = "chrome/android/java/res/values/aerium_tab_switcher_arrays.xml"
+    os.makedirs(os.path.dirname(arrays_xml_path), exist_ok=True)
+    with open(arrays_xml_path, "w", encoding="utf-8") as f:
+        f.write("""<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string-array name="aerium_tab_switcher_entries">
+        <item>@string/aerium_tab_switcher_grid</item>
+        <item>@string/aerium_tab_switcher_vertical_with_groups</item>
+        <item>@string/aerium_tab_switcher_vertical_no_groups</item>
+    </string-array>
+    <string-array name="aerium_tab_switcher_values">
+        <item>0</item>
+        <item>1</item>
+        <item>2</item>
+    </string-array>
+</resources>
+""")
+    print(f"[aerium] [SUCCESS] Created {arrays_xml_path}")
+except Exception as e:
+    print(f"[ERROR] [aerium] Failed creating {arrays_xml_path}: {e}")
+    traceback.print_exc()
+
+# --- Step D: Inject ListPreference into tabs_settings.xml ---
+tabs_settings_path = "chrome/android/java/res/xml/tabs_settings.xml"
+def inject_pref(c):
+    if 'android:key="aerium_tab_switcher_mode"' in c:
+        return c
+    pref_item = """
+    <org.chromium.components.browser_ui.settings.ChromeBaseListPreference
+        android:key="aerium_tab_switcher_mode"
+        android:title="@string/aerium_tab_switcher_layout_title"
+        android:summary="@string/aerium_tab_switcher_layout_summary"
+        android:entries="@array/aerium_tab_switcher_entries"
+        android:entryValues="@array/aerium_tab_switcher_values"
+        android:defaultValue="0"
+        app:useSimpleSummaryProvider="true" />
+"""
+    if "</PreferenceScreen>" in c:
+        return c.replace("</PreferenceScreen>", pref_item + "\n</PreferenceScreen>", 1)
+    return c + pref_item
+patch_file(tabs_settings_path, "preference xml injection", inject_pref)
+
+# --- Step E: Patch TabUiFeatureUtilities.java ---
+def patch_util(c):
+    if "getAeriumTabSwitcherMode" in c:
+        return c
+    methods = """
+    public static final String AERIUM_TAB_SWITCHER_MODE_KEY = "aerium_tab_switcher_mode";
+
+    public static int getAeriumTabSwitcherMode() {
+        try {
+            String val = org.chromium.base.ContextUtils.getAppSharedPreferences()
+                    .getString(AERIUM_TAB_SWITCHER_MODE_KEY, "0");
+            return Integer.parseInt(val);
+        } catch (Exception e) {
+            return 0;
+        }
+    }
+
+    public static boolean isVerticalStackSelected() {
+        return getAeriumTabSwitcherMode() >= 1;
+    }
+
+    public static boolean isTabGroupDisabledForVerticalStack() {
+        return getAeriumTabSwitcherMode() == 2;
+    }
+"""
+    idx = c.rfind("}")
+    if idx != -1:
+        return c[:idx] + "\n" + methods + "\n}\n"
+    return None
+
 for p in glob.glob("**/TabUiFeatureUtilities.java", recursive=True):
     if "out" in p: continue
-    with open(p, "r", encoding="utf-8") as f:
-        c = f.read()
-    c = re.sub(r'public static boolean isStackTabSwitcherSelected\(\)\s*\{[^}]*\}', '', c)
-    c = re.sub(r'public static int getSelectedTabSwitcherType\(\)\s*\{[^}]*\}', '', c)
-    c = c.replace("if (isStackTabSwitcherSelected()) { return false; }", "")
-    c = c.replace("return TabListMode.LIST;", "return TabListMode.GRID;")
-    with open(p, "w", encoding="utf-8") as f:
-        f.write(c)
-    print(f"[aerium] Cleaned {p}")
+    patch_file(p, "TabUiFeatureUtilities helpers", patch_util)
 
-# 3. Clean TabListCoordinator.java (ensure span count and layout mode defaults)
+# --- Step F: Patch TabListCoordinator.java ---
+def patch_coord(c):
+    # 1. Update layoutType to disable grouping when mode 2 is active
+    clean_target = "int layoutType = actionOnRelatedTabs ? TabListLayoutType.GROUPED : TabListLayoutType.FLAT;"
+    if clean_target in c:
+        c = c.replace(clean_target, "int layoutType = (actionOnRelatedTabs && !TabUiFeatureUtilities.isTabGroupDisabledForVerticalStack()) ? TabListLayoutType.GROUPED : TabListLayoutType.FLAT;", 1)
+    
+    # 2. Modify updateGridCardLayout for vertical card aspect ratio
+    old_update = "mMediator.setDefaultGridCardSize(newDefaultSize);"
+    if old_update in c and "isVerticalStackSelected" not in c:
+        new_update = """if (TabUiFeatureUtilities.isVerticalStackSelected()) {
+            int verticalCardHeightPx = Math.min((int)(cardWidthPx * 0.65f), (int)(viewWidth * 0.65f));
+            newDefaultSize = new Size(cardWidthPx, verticalCardHeightPx);
+        }
+        mMediator.setDefaultGridCardSize(newDefaultSize);"""
+        c = c.replace(old_update, new_update, 1)
+    return c
+
 for p in glob.glob("**/TabListCoordinator.java", recursive=True):
     if "out" in p: continue
-    with open(p, "r", encoding="utf-8") as f:
-        c = f.read()
-    # Ensure standard grid mode
-    if "TabListMode.LIST" in c and "isTablet" not in c:
-        c = c.replace("TabListMode.LIST", "TabListMode.GRID")
-        with open(p, "w", encoding="utf-8") as f:
-            f.write(c)
-        print(f"[aerium] Restored TabListMode.GRID in {p}")
+    patch_file(p, "TabListCoordinator layout sizing", patch_coord)
 
-# 4. Clean XMLs and Arrays
-for p in glob.glob("chrome/**/res/xml/*tab*.xml", recursive=True):
+# --- Step G: Patch TabListMediator.java ---
+def patch_mediator(c):
+    old_span = "int getSpanCount(int screenWidthDp) {"
+    if old_span in c and "isVerticalStackSelected" not in c:
+        new_span = """int getSpanCount(int screenWidthDp) {
+        if (TabUiFeatureUtilities.isVerticalStackSelected()) {
+            return 1;
+        }"""
+        return c.replace(old_span, new_span, 1)
+    return c
+
+for p in glob.glob("**/TabListMediator.java", recursive=True):
     if "out" in p: continue
-    with open(p, "r", encoding="utf-8") as f:
-        c = f.read()
-    c = re.sub(r'<PreferenceCategory[^>]*android:title="Tab Switcher"[^>]*>.*?</PreferenceCategory>', '', c, flags=re.DOTALL)
-    c = re.sub(r'<[^>]*android:key="tab_switcher_type"[^>]*/>', '', c)
-    c = re.sub(r'<[^>]*android:key="aerium_vertical_tab_switcher"[^>]*/>', '', c)
-    with open(p, "w", encoding="utf-8") as f:
-        f.write(c)
+    patch_file(p, "TabListMediator span count override", patch_mediator)
+
+# --- Step H: Patch TabModelFilterProvider.java ---
+def patch_filter(c):
+    target_group = "new TabGroupModelFilterImpl("
+    if target_group in c and "isTabGroupDisabledForVerticalStack" not in c:
+        c = c.replace(
+            target_group,
+            "TabUiFeatureUtilities.isTabGroupDisabledForVerticalStack() ? new EmptyTabModelFilter("
+        )
+        if "import org.chromium.chrome.browser.tasks.tab_management.TabUiFeatureUtilities;" not in c:
+            c = "import org.chromium.chrome.browser.tasks.tab_management.TabUiFeatureUtilities;\nimport org.chromium.chrome.browser.tabmodel.EmptyTabModelFilter;\n" + c
+        return c
+    return c
+
+for p in glob.glob("**/TabModelFilterProvider.java", recursive=True):
+    if "out" in p: continue
+    patch_file(p, "TabModelFilterProvider tab group bypass", patch_filter)
 
 EOF
+
+# Invalidate intermediate javac jars to force recompilation of the patched UI
+find . -path "*/obj/chrome/android/features/tab_ui/*" -name "*.jar" -delete 2>/dev/null || true
+find . -path "*/obj/chrome/android/chrome_java/*" -name "*.jar" -delete 2>/dev/null || true
+
 
 
 # ==============================================================================
@@ -1346,13 +1493,15 @@ for outdir in "out/Default" "chromium/src/out/Default"; do
       break
     fi
     
-    DIAG_TARGETS=(
+DIAG_TARGETS=(
       obj/chrome/browser/ui/webui/configs/chrome_web_ui_configs.o
       obj/chrome/browser/glic/impl/glic_web_client_handler.o
       obj/chrome/browser/interstitials/impl/enterprise_util.o
       obj/chrome/browser/download/impl/download_target_determiner.o
-      obj/chrome/browser/download/impl/chrome_download_manager_delegate.o
+      obj/chrome/browser/download/impl/download_target_determiner.o
       obj/chrome/browser/ui/android/extensions/extensions/extension_install_dialog_view_android.o
+      obj/chrome/android/features/tab_ui/java.javac.jar
+      obj/chrome/android/chrome_java.javac.jar
     )
     
     autoninja -k 0 -C "$outdir" "${DIAG_TARGETS[@]}" || {
