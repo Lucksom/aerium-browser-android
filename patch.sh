@@ -555,7 +555,7 @@ namespace ui {
 DOCUMENT_USER_DATA_KEY_IMPL(ColorChangeHandler);
 
 ColorChangeHandler::ColorChangeHandler(content::RenderFrameHost* rfh)
-    : content::DocumentUserData<ColorChangeHandler>(*rfh) {}
+    : content::DocumentUserData<ColorChangeHandler>(rfh) {}
 
 ColorChangeHandler::~ColorChangeHandler() = default;
 
@@ -582,6 +582,7 @@ EOF
 
 # Force recompile of object file
 find . -path "*/obj/chrome/browser/ui/android/extensions/extensions/extension_install_dialog_view_android.o" -delete 2>/dev/null || true
+
 
                                        
 # ==============================================================================
