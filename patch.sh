@@ -384,9 +384,9 @@ sed -i '/Pref.PIN_EXTENSIONS_MENU_BUTTON, this::updateMenuButtonPinState);$/a\if
 sed -i '/"ExtensionsToolbarCoordinatorImpl.requestLayoutWithViewUtils()");$/a\if (!isMenuButtonPinned()) { mContainer.findViewById(R.id.extensions_menu_button).setVisibility(View.GONE); }' chrome/browser/ui/android/toolbar/java/src/org/chromium/chrome/browser/toolbar/extensions/ExtensionsToolbarCoordinatorImpl.java 2>/dev/null || true
 
 # ==============================================================================
-# [21] COMPLETE VERIFIED EXTENSION INSTALL DIALOG & JNI RESOLUTION
+# [21] COMPLETE EXTENSION INSTALL DIALOG & LINKER RESOLUTIONS
 # ==============================================================================
-echo "==> [21] Generating exact, verified ExtensionInstallDialogViewAndroid..."
+echo "==> [21] Generating exact ExtensionInstallDialogViewAndroid & ColorChangeHandler stubs..."
 
 # 1. IncognitoUtils & Extension Host idempotent baseline
 python3 - << 'EOF' || true
@@ -428,16 +428,7 @@ EOF
 # 3. Touch security filter on ExtensionInstallDialogBridge.java
 sed -i 's|\.with(ModalDialogProperties.FILTER_TOUCH_FOR_SECURITY, true)|\.with(ModalDialogProperties.FILTER_TOUCH_FOR_SECURITY, false)|' chrome/browser/ui/android/extensions/java/src/org/chromium/chrome/browser/ui/extensions/ExtensionInstallDialogBridge.java 2>/dev/null || true
 
-# 4. Dump ShowParams and Prompt headers to be 100% visible
-python3 - << 'EOF'
-import os, glob
-print("=== Checking for ExtensionInstallPromptShowParams headers ===")
-for p in glob.glob("**/extension_install_prompt_show_params*.h", recursive=True):
-    if "out" in p: continue
-    print(f"  Found: {p}")
-EOF
-
-# 5. Generate pristine extension_install_dialog_view_android.cc
+# 4. Generate pristine extension_install_dialog_view_android.cc
 python3 - << 'EOF'
 import os
 
@@ -459,16 +450,17 @@ code = """// Copyright 2025 The Chromium Authors
 #include "base/functional/bind.h"
 #include "chrome/browser/extensions/extension_install_prompt.h"
 #include "chrome/browser/extensions/extension_install_prompt_show_params.h"
+#include "content/public/browser/document_user_data.h"
+#include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/web_contents.h"
 #include "extensions/browser/extension_install_prompt_client.h"
 #include "extensions/browser/install_prompt_data.h"
 #include "ui/android/window_android.h"
 #include "ui/gfx/android/java_bitmap.h"
+#include "ui/webui/color_change_listener/color_change_handler.h"
 
 // Generated JNI header
 #include "chrome/browser/ui/android/extensions/jni_headers/ExtensionInstallDialogBridge_jni.h"
-
-class ExtensionInstallPromptShowParams;
 
 namespace extensions {
 
@@ -557,6 +549,27 @@ ExtensionInstallPrompt::GetDefaultShowDialogCallback() {
   });
 }
 
+// Satisfy missing ui::ColorChangeHandler linker symbols for Android libchrome
+namespace ui {
+
+DOCUMENT_USER_DATA_KEY_IMPL(ColorChangeHandler);
+
+ColorChangeHandler::ColorChangeHandler(content::RenderFrameHost* rfh)
+    : content::DocumentUserData<ColorChangeHandler>(*rfh) {}
+
+ColorChangeHandler::~ColorChangeHandler() = default;
+
+void ColorChangeHandler::Bind(
+    mojo::PendingReceiver<color_change_listener::mojom::PageHandler> receiver,
+    bool allow_non_webui) {}
+
+void ColorChangeHandler::OnColorProviderChanged() {}
+
+void ColorChangeHandler::SetPage(
+    mojo::PendingRemote<color_change_listener::mojom::Page> page) {}
+
+}  // namespace ui
+
 // Invoke the JNI Zero entrypoint generator macro
 DEFINE_JNI_FOR_ExtensionInstallDialogBridge()
 """
@@ -569,7 +582,6 @@ EOF
 
 # Force recompile of object file
 find . -path "*/obj/chrome/browser/ui/android/extensions/extensions/extension_install_dialog_view_android.o" -delete 2>/dev/null || true
-
 
                                        
 # ==============================================================================
