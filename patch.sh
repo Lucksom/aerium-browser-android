@@ -384,9 +384,9 @@ sed -i '/Pref.PIN_EXTENSIONS_MENU_BUTTON, this::updateMenuButtonPinState);$/a\if
 sed -i '/"ExtensionsToolbarCoordinatorImpl.requestLayoutWithViewUtils()");$/a\if (!isMenuButtonPinned()) { mContainer.findViewById(R.id.extensions_menu_button).setVisibility(View.GONE); }' chrome/browser/ui/android/toolbar/java/src/org/chromium/chrome/browser/toolbar/extensions/ExtensionsToolbarCoordinatorImpl.java 2>/dev/null || true
 
 # ==============================================================================
-# [21] COMPLETE VERIFIED EXTENSION INSTALL DIALOG & JNI RESOLUTION
+# [21] EXTENSION INSTALL DIALOG VIEW & LIBCHROME LINKER INSPECTION
 # ==============================================================================
-echo "==> [21] Generating verified ExtensionInstallDialogViewAndroid & resolving JNI..."
+echo "==> [21] Generating ExtensionInstallDialogViewAndroid & inspecting ColorChangeHandler..."
 
 # 1. IncognitoUtils & Extension Host idempotent baseline
 python3 - << 'EOF' || true
@@ -403,7 +403,6 @@ if os.path.exists(p):
         c = c.replace(target, target + " " + inject, 1)
         with open(p, "w", encoding="utf-8") as f:
             f.write(c)
-        print("[aerium] IncognitoUtils.java verified")
 EOF
 
 # 2. Extension Host: Safe, idempotent SetPrimaryPageImportance
@@ -422,13 +421,39 @@ if os.path.exists(p):
             c = c.replace(target, target + "\n" + call, 1)
             with open(p, "w", encoding="utf-8") as f:
                 f.write(c)
-            print("[aerium] SetPrimaryPageImportance verified in extension_host.cc")
 EOF
 
 # 3. Touch security filter on ExtensionInstallDialogBridge.java
 sed -i 's|\.with(ModalDialogProperties.FILTER_TOUCH_FOR_SECURITY, true)|\.with(ModalDialogProperties.FILTER_TOUCH_FOR_SECURITY, false)|' chrome/browser/ui/android/extensions/java/src/org/chromium/chrome/browser/ui/extensions/ExtensionInstallDialogBridge.java 2>/dev/null || true
 
-# 4. Generate pristine extension_install_dialog_view_android.cc
+# 4. Dump ColorChangeHandler files for exact inspection
+python3 - << 'EOF'
+import os, glob
+
+print("\n=== 1. color_change_handler.h ===")
+for p in glob.glob("**/color_change_handler.h", recursive=True):
+    if "out" in p: continue
+    print(f"\n--- {p} ---")
+    with open(p, "r", encoding="utf-8", errors="ignore") as f:
+        print(f.read())
+
+print("\n=== 2. Existing color_change_handler.cc locations ===")
+for p in glob.glob("**/color_change_handler.cc", recursive=True):
+    if "out" in p: continue
+    print(f"  Found .cc: {p}")
+
+print("\n=== 3. BUILD.gn / .gni referencing color_change_handler ===")
+for p in glob.glob("**/BUILD.gn", recursive=True) + glob.glob("**/*.gni", recursive=True):
+    if "out" in p: continue
+    try:
+        with open(p, "r", encoding="utf-8", errors="ignore") as f:
+            if "color_change_handler" in f.read():
+                print(f"  Referenced in: {p}")
+    except Exception:
+        pass
+EOF
+
+# 5. Generate pristine extension_install_dialog_view_android.cc
 python3 - << 'EOF'
 import os
 
@@ -447,6 +472,7 @@ code = """// Copyright 2025 The Chromium Authors
 #include "base/android/jni_android.h"
 #include "base/android/jni_string.h"
 #include "base/android/scoped_java_ref.h"
+#include "base/functional/bind.h"
 #include "chrome/browser/extensions/extension_install_prompt.h"
 #include "content/public/browser/web_contents.h"
 #include "extensions/browser/extension_install_prompt_client.h"
@@ -527,6 +553,21 @@ void ExtensionInstallDialogViewAndroid::BuildPropertyModel() {
 
 }  // namespace extensions
 
+// Implementation of missing ExtensionInstallPrompt::GetDefaultShowDialogCallback()
+// static
+ExtensionInstallPrompt::ShowDialogCallback
+ExtensionInstallPrompt::GetDefaultShowDialogCallback() {
+  return base::BindRepeating([](
+      ExtensionInstallPrompt::DoneCallback done_callback,
+      std::unique_ptr<InstallPromptData> prompt) {
+    if (done_callback) {
+      std::move(done_callback).Run(
+          extensions::ExtensionInstallPromptClient::DoneCallbackPayload(
+              extensions::ExtensionInstallPromptClient::Result::ABORTED));
+    }
+  });
+}
+
 // Invoke the JNI Zero entrypoint generator macro
 DEFINE_JNI_FOR_ExtensionInstallDialogBridge()
 """
@@ -540,8 +581,8 @@ EOF
 # Force recompile of object file
 find . -path "*/obj/chrome/browser/ui/android/extensions/extensions/extension_install_dialog_view_android.o" -delete 2>/dev/null || true
 
+
                                        
- 
 # ==============================================================================
 # [22] CONTENT URI & DOCUMENT PATHS
 # ==============================================================================
