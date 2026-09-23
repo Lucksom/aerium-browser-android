@@ -706,12 +706,11 @@ git checkout -- \
   chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabUiFeatureUtilities.java \
   chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabListCoordinator.java \
   chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabListMediator.java \
-  chrome/android/java/src/org/chromium/chrome/browser/tabmodel/TabModelFilterProvider.java \
   chrome/android/java/res/xml/tabs_settings.xml \
   chrome/browser/ui/android/strings/android_chrome_strings.grd 2>/dev/null || true
 
 python3 - << 'EOF'
-import os, sys, traceback, glob
+import os, sys, traceback, glob, re
 
 def patch_file(p, desc, func):
     if not os.path.exists(p):
@@ -733,7 +732,7 @@ def patch_file(p, desc, func):
         traceback.print_exc()
         return False
 
-# --- Step B: Inject Strings & Array Resources into android_chrome_strings.grd ---
+# --- Step B: Inject Strings into android_chrome_strings.grd ---
 grd_path = "chrome/browser/ui/android/strings/android_chrome_strings.grd"
 def inject_strings(c):
     if "IDS_AERIUM_TAB_SWITCHER_LAYOUT_TITLE" in c:
@@ -756,8 +755,10 @@ def inject_strings(c):
         Classic Vertical Stack (without tab groups)
       </message>
 """
-    if "<messages>" in c:
-        return c.replace("<messages>", "<messages>" + new_strings, 1)
+    m = re.search(r'<messages[^>]*>', c)
+    if m:
+        idx = m.end()
+        return c[:idx] + new_strings + c[idx:]
     return None
 patch_file(grd_path, "strings injection", inject_strings)
 
@@ -841,12 +842,12 @@ for p in glob.glob("**/TabUiFeatureUtilities.java", recursive=True):
 
 # --- Step F: Patch TabListCoordinator.java ---
 def patch_coord(c):
-    # 1. Update layoutType to disable grouping when mode 2 is active
+    # 1. Disable UI grouping if Mode 2 is selected (forces TabListLayoutType.FLAT)
     clean_target = "int layoutType = actionOnRelatedTabs ? TabListLayoutType.GROUPED : TabListLayoutType.FLAT;"
     if clean_target in c:
         c = c.replace(clean_target, "int layoutType = (actionOnRelatedTabs && !TabUiFeatureUtilities.isTabGroupDisabledForVerticalStack()) ? TabListLayoutType.GROUPED : TabListLayoutType.FLAT;", 1)
     
-    # 2. Modify updateGridCardLayout for vertical card aspect ratio
+    # 2. Modify updateGridCardLayout for vertical stack card height
     old_update = "mMediator.setDefaultGridCardSize(newDefaultSize);"
     if old_update in c and "isVerticalStackSelected" not in c:
         new_update = """if (TabUiFeatureUtilities.isVerticalStackSelected()) {
@@ -861,7 +862,7 @@ for p in glob.glob("**/TabListCoordinator.java", recursive=True):
     if "out" in p: continue
     patch_file(p, "TabListCoordinator layout sizing", patch_coord)
 
-# --- Step G: Patch TabListMediator.java ---
+# --- Step G: Patch TabListMediator.java (spanCount = 1 in vertical mode) ---
 def patch_mediator(c):
     old_span = "int getSpanCount(int screenWidthDp) {"
     if old_span in c and "isVerticalStackSelected" not in c:
@@ -876,29 +877,11 @@ for p in glob.glob("**/TabListMediator.java", recursive=True):
     if "out" in p: continue
     patch_file(p, "TabListMediator span count override", patch_mediator)
 
-# --- Step H: Patch TabModelFilterProvider.java ---
-def patch_filter(c):
-    target_group = "new TabGroupModelFilterImpl("
-    if target_group in c and "isTabGroupDisabledForVerticalStack" not in c:
-        c = c.replace(
-            target_group,
-            "TabUiFeatureUtilities.isTabGroupDisabledForVerticalStack() ? new EmptyTabModelFilter("
-        )
-        if "import org.chromium.chrome.browser.tasks.tab_management.TabUiFeatureUtilities;" not in c:
-            c = "import org.chromium.chrome.browser.tasks.tab_management.TabUiFeatureUtilities;\nimport org.chromium.chrome.browser.tabmodel.EmptyTabModelFilter;\n" + c
-        return c
-    return c
-
-for p in glob.glob("**/TabModelFilterProvider.java", recursive=True):
-    if "out" in p: continue
-    patch_file(p, "TabModelFilterProvider tab group bypass", patch_filter)
-
 EOF
 
 # Invalidate intermediate javac jars to force recompilation of the patched UI
 find . -path "*/obj/chrome/android/features/tab_ui/*" -name "*.jar" -delete 2>/dev/null || true
 find . -path "*/obj/chrome/android/chrome_java/*" -name "*.jar" -delete 2>/dev/null || true
-
 
 
 # ==============================================================================
