@@ -25,6 +25,7 @@ jobs:
       - name: Fetch and inspect key files on demand
         working-directory: chromium-src
         run: |
+          set +e
           show() {
             echo "===== $1 ====="
             git show "$VERSION:$1" 2>/dev/null || echo "!!! could not fetch $1"
