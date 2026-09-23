@@ -17,34 +17,36 @@ jobs:
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
           echo "Resolved Chromium version: $VERSION"
 
-      - name: Sparse partial clone of relevant trees
+      - name: Partial clone (tree metadata only, no blobs)
         run: |
-          git clone --filter=blob:none --sparse --no-checkout --depth 1 \
+          git clone --filter=blob:none --no-checkout --depth 1 \
             --branch "$VERSION" \
             https://chromium.googlesource.com/chromium/src.git chromium-src
           cd chromium-src
-          git sparse-checkout set \
-            chrome/android \
-            chrome/browser/compositor \
-            chrome/browser/flags \
-            chrome/browser/tabmodel \
-            chrome/browser/browser_controls \
-            chrome/browser/tab \
-            ui/android \
-            components/browser_ui
-          git checkout "$VERSION"
+          git ls-tree -r --name-only "$VERSION" > /tmp/all_paths.txt
+          wc -l /tmp/all_paths.txt
 
-      - name: Search for tab classes
-        working-directory: chromium-src
+      - name: Search for tab classes across entire tree
         run: |
           CLASSES=(
-            TabContentManager TabModelSelectorTabModelObserver TabModelObserver
-            TabModelUtils ResourceManager SceneLayer TabListSceneLayer
-            CompositorAnimator FloatProperty EventFilter GestureEventFilter
-            GestureHandler BrowserControlsStateProvider BrowserControlsUtils
+            TabContentManager SceneLayer TabListSceneLayer CompositorAnimator
+            FloatProperty EventFilter GestureEventFilter GestureHandler
             LayoutManager
           )
+          echo "=========================================================="
           for cls in "${CLASSES[@]}"; do
-            f=$(find . -name "${cls}.java" 2>/dev/null | head -1)
-            [ -n "$f" ] && echo "FOUND: $cls -> $f" || echo "NOT_FOUND: $cls"
+            matches=$(grep -E "/${cls}\.java$" /tmp/all_paths.txt)
+            if [ -n "$matches" ]; then
+              echo "FOUND: $cls"
+              echo "$matches" | sed 's/^/    -> /'
+            else
+              echo "NOT_FOUND (exact): $cls -- trying fuzzy match..."
+              fuzzy=$(grep -iE "${cls}" /tmp/all_paths.txt | grep '\.java$' | head -5)
+              if [ -n "$fuzzy" ]; then
+                echo "  possible renames/relocations:"
+                echo "$fuzzy" | sed 's/^/    ? /'
+              else
+                echo "  NOTHING MATCHING '$cls' ANYWHERE IN THE TREE -- likely deleted"
+              fi
+            fi
           done
