@@ -1032,20 +1032,21 @@ def patch_coord(c):
         print(f"[FATAL] Sub-patch 2 (setLayoutManager) failed in TabListCoordinator!")
         return None
 
-    # 3. Card Height in updateGridCardLayout for substantial preview
+    # 3. Exact Chromium 88 Card Size
     pattern_size = r'mMediator\.setDefaultGridCardSize\(\s*newDefaultSize\s*\);'
     repl_size = """if (TabUiFeatureUtilities.isVerticalStackSelected()) {
-            int classicCardHeightPx = (int)(mRecyclerView.getWidth() * 1.2f);
-            newDefaultSize = new Size(mRecyclerView.getWidth(), classicCardHeightPx);
-        }
-        mMediator.setDefaultGridCardSize(newDefaultSize);"""
+            int rvWidth = mRecyclerView.getWidth();
+            int rvHeight = mRecyclerView.getHeight();
+            int classicWidth = (rvWidth > 0) ? rvWidth : newDefaultSize.getWidth();
+            int classicHeight = (rvHeight > 0) ? (int)(rvHeight * 0.70f) : (int)(classicWidth * 1.45f);
+            mMediator.setDefaultGridCardSize(new Size(classicWidth, classicHeight));
+        } else {
+            mMediator.setDefaultGridCardSize(newDefaultSize);
+        }"""
     c, n3 = re.subn(pattern_size, repl_size, c, count=1)
     if n3 != 1:
         print(f"[FATAL] Sub-patch 3 (setDefaultGridCardSize) failed in TabListCoordinator!")
         return None
-
-    return (c, False)
-
 patch_file(coord_path, "TabListCoordinator layout & manager setup", patch_coord)
 
 # --- Step H: Patch TabListMediator.java (spanCount = 1 in vertical mode) ---
