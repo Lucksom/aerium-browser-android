@@ -1,4 +1,4 @@
-name: Inspect Motion Event Classes
+name: Inspect Scene Layer and Layout Template
 
 on:
   workflow_dispatch:
@@ -22,24 +22,26 @@ jobs:
             --branch "$VERSION" \
             https://chromium.googlesource.com/chromium/src.git chromium-src
 
-      - name: Show full content of the two renamed gesture classes
+      - name: Show StaticTabSceneLayer.java in full
         working-directory: chromium-src
         run: |
           set +e
-          echo "===== MotionEventHandler.java (likely renamed GestureHandler) ====="
-          git show "$VERSION:chrome/android/java/src/org/chromium/chrome/browser/compositor/layouts/eventfilter/MotionEventHandler.java"
+          echo "===== StaticTabSceneLayer.java ====="
+          git show "$VERSION:chrome/android/java/src/org/chromium/chrome/browser/compositor/scene_layer/StaticTabSceneLayer.java"
 
-          echo
-          echo "===== MotionEventFilter.java (likely renamed GestureEventFilter) ====="
-          git show "$VERSION:chrome/android/java/src/org/chromium/chrome/browser/compositor/layouts/eventfilter/MotionEventFilter.java"
-
-      - name: Structural re-search for a TabListSceneLayer equivalent
+      - name: Find and show ToolbarSwipeLayout.java (current drag+scene-layer template)
         working-directory: chromium-src
         run: |
           set +e
           git ls-tree -r --name-only "$VERSION" > /tmp/all_paths.txt
-          echo "### Any file extending SceneLayer with 'Tab' in its name or content? ###"
-          grep -E "\.java$" /tmp/all_paths.txt | grep -i "scenelayer" | while read -r f; do
-            echo "--- $f ---"
-            git show "$VERSION:$f" 2>/dev/null | grep -n "extends SceneLayer\|class .*SceneLayer" | head -3
-          done
+          f=$(grep -i "ToolbarSwipeLayout.java" /tmp/all_paths.txt | head -1)
+          echo "Found template file: $f"
+          echo "===== $f ====="
+          git show "$VERSION:$f"
+
+      - name: Grep Layout.java for its actual scene-attachment method name
+        working-directory: chromium-src
+        run: |
+          set +e
+          git show "$VERSION:chrome/browser/ui/android/layouts/java/src/org/chromium/chrome/browser/layouts/Layout.java" \
+            | grep -n -i -B2 -A6 "sceneoverlay\|getUpdatedSceneOverlayTree\|addSceneOverlay\|attachChild"
