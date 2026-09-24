@@ -703,16 +703,32 @@ find . -name "AeriumBackupFragment.java" -exec sed -i 's/RESTART_SNACKBAR_DURATI
 # ==============================================================================
 echo "==> [26] Injecting True Classic 3D Overlapping Stack Tab Switcher with Settings..."
 
-# --- Step A: Clean reset of files touched by previous attempts ---
-git checkout -- \
-  chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabUiFeatureUtilities.java \
-  chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabListCoordinator.java \
-  chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabListMediator.java \
-  chrome/android/features/tab_ui/tab_management_java_sources.gni \
-  chrome/android/features/tab_ui/java/res/xml/tabs_settings.xml \
-  chrome/android/java/res/values/values.xml \
-  chrome/android/java/res/values/arrays.xml \
-  chrome/browser/ui/android/strings/android_chrome_strings.grd 2>/dev/null || true
+# --- Step A: Guaranteed clean reset of all candidate files in the git tree ---
+python3 - << 'EOF' || true
+import subprocess, glob, os
+targets = [
+    "TabUiFeatureUtilities.java",
+    "TabListCoordinator.java",
+    "TabListMediator.java",
+    "ClassicStackLayoutManager.java",
+    "tab_management_java_sources.gni",
+    "tabs_settings.xml",
+    "values.xml",
+    "arrays.xml",
+    "android_chrome_strings.grd"
+]
+for target in targets:
+    for f in glob.glob(f"**/{target}", recursive=True):
+        if not f.startswith("out" + os.sep) and f"{os.sep}out{os.sep}" not in f:
+            if target == "ClassicStackLayoutManager.java":
+                try:
+                    os.remove(f)
+                except OSError:
+                    pass
+            else:
+                subprocess.run(["git", "checkout", "-f", "--", f], check=False)
+print("[aerium] Cleaned and reset tab switcher files to upstream state.")
+EOF
 
 python3 - << 'EOF'
 import os, sys, traceback, glob, re
@@ -891,7 +907,7 @@ def patch_util(c):
     return None
 patch_file(util_path, "TabUiFeatureUtilities helpers", patch_util)
 
-# --- Step F: Create ClassicStackLayoutManager.java (Exact M88 Physics & Scale) ---
+# --- Step F: Create ClassicStackLayoutManager.java ---
 coord_path = find_canonical_file("TabListCoordinator.java", path_hint=os.path.join("tasks", "tab_management"))
 stack_lm_path = os.path.join(os.path.dirname(coord_path), "ClassicStackLayoutManager.java")
 
@@ -909,10 +925,8 @@ import androidx.recyclerview.widget.RecyclerView;
 
 /**
  * Recreates the authentic Chromium 88 OverlappingStack 3D perspective and card cascade.
- * Cards cascade backward with 8.5 degree tilt, 85% width ratio, 64dp header peek, and top-edge compression.
  */
 public class ClassicStackLayoutManager extends LinearLayoutManager {
-    // Exact Chromium 88 OverlappingStack proportions:
     private static final float SCALE_AMOUNT = 0.85f;
     private static final float TILT_ANGLE_DEGREES = 8.5f;
     private static final int MAX_STACKED_TABS_TOP = 3;
@@ -953,21 +967,17 @@ public class ClassicStackLayoutManager extends LinearLayoutManager {
             int position = getPosition(child);
             float viewTop = child.getTop();
 
-            // 1. Z-Elevation: Higher positions tuck underneath front card
             float elevation = Math.max(1.0f, 60.0f - (position * 2.5f));
             child.setElevation(elevation);
 
-            // 2. 3D Perspective Tilt: Pivots along the top header bar
             child.setCameraDistance(mDensity * 10000.0f);
             child.setPivotX(child.getWidth() / 2.0f);
             child.setPivotY(0.0f);
             child.setRotationX(TILT_ANGLE_DEGREES);
 
-            // 3. Classic 85% Floating Card Width
             child.setScaleX(SCALE_AMOUNT);
             child.setScaleY(SCALE_AMOUNT);
 
-            // 4. Overlapping Cascade: Shift card up so only header peeks out
             if (position > 0) {
                 int childHeight = child.getHeight();
                 if (childHeight > mPeekHeaderPx) {
@@ -976,7 +986,6 @@ public class ClassicStackLayoutManager extends LinearLayoutManager {
                 }
             }
 
-            // 5. Top Stack Compression: Clamps cards when reaching the top screen border
             if (viewTop < parentTop) {
                 float offset = parentTop - viewTop;
                 int stackRank = Math.min(position, MAX_STACKED_TABS_TOP);
@@ -1004,16 +1013,22 @@ def patch_gni(c):
 
 patch_file(gni_path, "ClassicStackLayoutManager registration in tab_management_java_sources.gni", patch_gni)
 
-# --- Step G: Patch TabListCoordinator.java (Exact M88 Card Dimensions without final reassignment) ---
+# --- Step G: Patch TabListCoordinator.java ---
 def patch_coord(c):
-    if "ClassicStackLayoutManager" in c:
+    # If the file already has the bad code, strip it so we can re-patch cleanly
+    if "newDefaultSize = new Size" in c:
+        print("[aerium] Detected previously broken TabListCoordinator, cleaning before patch...")
+        c = re.sub(r'if \(TabUiFeatureUtilities\.isVerticalStackSelected\(\)\)[\s\S]*?mMediator\.setDefaultGridCardSize\(newDefaultSize\);\s*\}', 'mMediator.setDefaultGridCardSize(newDefaultSize);', c)
+        c = re.sub(r'if \(TabUiFeatureUtilities\.isVerticalStackSelected\(\)\)[\s\S]*?mRecyclerView\.setLayoutManager\(gridLayoutManager\);\s*\}', 'mRecyclerView.setLayoutManager(gridLayoutManager);', c)
+
+    if "ClassicStackLayoutManager" in c and "newDefaultSize = new Size" not in c:
         return (c, True)
 
     # 1. Disable UI grouping if Mode 2 is selected (forces TabListLayoutType.FLAT)
     pattern_layout = r'int\s+layoutType\s*=\s*actionOnRelatedTabs\s*\?\s*TabListLayoutType\.GROUPED\s*:\s*TabListLayoutType\.FLAT\s*;'
     repl_layout = 'int layoutType = (actionOnRelatedTabs && !TabUiFeatureUtilities.isTabGroupDisabledForVerticalStack()) ? TabListLayoutType.GROUPED : TabListLayoutType.FLAT;'
     c, n1 = re.subn(pattern_layout, repl_layout, c, count=1)
-    if n1 != 1:
+    if n1 != 1 and "isTabGroupDisabledForVerticalStack" not in c:
         print(f"[FATAL] Sub-patch 1 (layoutType) failed in TabListCoordinator!")
         return None
 
@@ -1028,7 +1043,7 @@ def patch_coord(c):
             mRecyclerView.setLayoutManager(gridLayoutManager);
         }"""
     c, n2 = re.subn(pattern_rv, repl_rv, c, count=1)
-    if n2 != 1:
+    if n2 != 1 and "ClassicStackLayoutManager stackManager" not in c:
         print(f"[FATAL] Sub-patch 2 (setLayoutManager) failed in TabListCoordinator!")
         return None
 
@@ -1052,7 +1067,7 @@ def patch_coord(c):
 
 patch_file(coord_path, "TabListCoordinator layout & manager setup", patch_coord)
 
-# --- Step H: Patch TabListMediator.java (spanCount = 1 in vertical mode) ---
+# --- Step H: Patch TabListMediator.java ---
 mediator_path = find_canonical_file("TabListMediator.java", path_hint=os.path.join("tasks", "tab_management"))
 def patch_mediator(c):
     if "isVerticalStackSelected" in c:
@@ -1074,7 +1089,9 @@ EOF
 
 # Invalidate intermediate javac jars to force clean recompilation
 find . -path "*/obj/chrome/android/chrome_java/*" -name "*.jar" -delete 2>/dev/null || true
-find . -path "*/obj/chrome/android/features/tab_ui/*" -name "*.jar" -delete 2>/dev/null || true  
+find . -path "*/obj/chrome/android/features/tab_ui/*" -name "*.jar" -delete 2>/dev/null || true
+
+
 
 
 # ==============================================================================
