@@ -1652,9 +1652,8 @@ DIAG_TARGETS=(
       obj/chrome/browser/glic/impl/glic_web_client_handler.o
       obj/chrome/browser/interstitials/impl/enterprise_util.o
       obj/chrome/browser/download/impl/download_target_determiner.o
-      obj/chrome/browser/download/impl/download_target_determiner.o
+      obj/chrome/browser/download/impl/chrome_download_manager_delegate.o
       obj/chrome/browser/ui/android/extensions/extensions/extension_install_dialog_view_android.o
-      obj/chrome/android/features/tab_ui/java.javac.jar
       obj/chrome/android/chrome_java.javac.jar
     )
     
