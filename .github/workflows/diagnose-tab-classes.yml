@@ -1,4 +1,4 @@
-name: Inspect Scene Layer and Layout Template
+name: Inspect Native Scene Layer
 
 on:
   workflow_dispatch:
@@ -22,26 +22,31 @@ jobs:
             --branch "$VERSION" \
             https://chromium.googlesource.com/chromium/src.git chromium-src
 
-      - name: Show StaticTabSceneLayer.java in full
-        working-directory: chromium-src
-        run: |
-          set +e
-          echo "===== StaticTabSceneLayer.java ====="
-          git show "$VERSION:chrome/android/java/src/org/chromium/chrome/browser/compositor/scene_layer/StaticTabSceneLayer.java"
-
-      - name: Find and show ToolbarSwipeLayout.java (current drag+scene-layer template)
+      - name: List all native scene_layer files and check for any multi-tab (vector-based) ones
         working-directory: chromium-src
         run: |
           set +e
           git ls-tree -r --name-only "$VERSION" > /tmp/all_paths.txt
-          f=$(grep -i "ToolbarSwipeLayout.java" /tmp/all_paths.txt | head -1)
-          echo "Found template file: $f"
-          echo "===== $f ====="
-          git show "$VERSION:$f"
 
-      - name: Grep Layout.java for its actual scene-attachment method name
+          echo "### All native scene_layer .cc/.h files ###"
+          grep -E "scene_layer.*\.(cc|h)$" /tmp/all_paths.txt
+
+          echo
+          echo "### Does any of them manage a vector/list of tabs? ###"
+          grep -E "scene_layer.*\.(cc|h)$" /tmp/all_paths.txt | while read -r f; do
+            hit=$(git show "$VERSION:$f" 2>/dev/null | grep -c "std::vector.*[Tt]ab\|std::vector.*[Ll]ayer")
+            if [ "$hit" -gt 0 ]; then
+              echo "CANDIDATE (vector-based): $f"
+            fi
+          done
+
+      - name: Show static_tab_scene_layer.cc and .h in full
         working-directory: chromium-src
         run: |
           set +e
-          git show "$VERSION:chrome/browser/ui/android/layouts/java/src/org/chromium/chrome/browser/layouts/Layout.java" \
-            | grep -n -i -B2 -A6 "sceneoverlay\|getUpdatedSceneOverlayTree\|addSceneOverlay\|attachChild"
+          for ext in cc h; do
+            f=$(grep -E "static_tab_scene_layer\.${ext}$" /tmp/all_paths.txt 2>/dev/null)
+            [ -z "$f" ] && f=$(git ls-tree -r --name-only "$VERSION" | grep -E "static_tab_scene_layer\.${ext}$")
+            echo "===== $f ====="
+            git show "$VERSION:$f" 2>/dev/null
+          done
