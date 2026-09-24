@@ -854,23 +854,45 @@ def inject_strings(c):
     return None
 patch_file(grd_path, "strings injection", inject_strings)
 
-# --- Step C: Cleanly inject string-arrays into chrome/android/java/res/values only ---
+# --- Step C: Cleanly inject string-arrays into chrome/android/java/res/values ONLY ---
+python3 - << 'EOF'
+import os, glob, re
+
+# 1. Clean up duplicate arrays if present in features/tab_ui to satisfy AAPT2
+tab_ui_res_pattern = os.path.join("features", "tab_ui", "java", "res", "values")
+for p in glob.glob("**/values.xml", recursive=True) + glob.glob("**/arrays.xml", recursive=True):
+    if tab_ui_res_pattern in p and "out" not in p:
+        try:
+            with open(p, "r", encoding="utf-8") as f:
+                content = f.read()
+            if "aerium_tab_switcher_entries" in content:
+                content = re.sub(r'<!-- Aerium Tab Switcher Preference Arrays -->[\s\S]*?</string-array>', '', content)
+                content = re.sub(r'<string-array name="aerium_tab_switcher_entries">[\s\S]*?</string-array>', '', content)
+                content = re.sub(r'<string-array name="aerium_tab_switcher_values">[\s\S]*?</string-array>', '', content)
+                with open(p, "w", encoding="utf-8") as f:
+                    f.write(content)
+                print(f"[aerium] Removed duplicate array definition from {p}")
+        except Exception as e:
+            print(f"[aerium] Notice cleaning {p}: {e}")
+
+# 2. Inject it once into chrome/android/java/res/values/values.xml
 target_res_xml = None
-for candidate in [
-    "chrome/android/java/res/values/arrays.xml",
-    "chrome/android/java/res/values/values.xml"
-]:
-    for p in glob.glob(f"**/{os.path.basename(candidate)}", recursive=True):
-        if "out" not in p and "third_party" not in p and "chrome" in p and "res" in p and "values" in p:
-            target_res_xml = p
-            break
-    if target_res_xml:
+for candidate in glob.glob("**/chrome/android/java/res/values/values.xml", recursive=True):
+    if "out" not in candidate and "third_party" not in candidate:
+        target_res_xml = candidate
         break
 
-def inject_arrays(c):
-    if "aerium_tab_switcher_entries" in c:
-        return (c, True)
-    arrays_snippet = """
+if not target_res_xml:
+    for candidate in glob.glob("**/chrome/android/java/res/values/arrays.xml", recursive=True):
+        if "out" not in candidate and "third_party" not in candidate:
+            target_res_xml = candidate
+            break
+
+if target_res_xml:
+    with open(target_res_xml, "r", encoding="utf-8") as f:
+        c = f.read()
+    if "aerium_tab_switcher_entries" not in c and "</resources>" in c:
+        arrays_snippet = """
     <!-- Aerium Tab Switcher Preference Arrays -->
     <string-array name="aerium_tab_switcher_entries">
         <item>@string/aerium_tab_switcher_grid</item>
@@ -883,12 +905,11 @@ def inject_arrays(c):
         <item>2</item>
     </string-array>
 """
-    if "</resources>" in c:
-        return (c.replace("</resources>", arrays_snippet + "\n</resources>", 1), False)
-    return None
-
-if target_res_xml:
-    patch_file(target_res_xml, f"preference arrays injection into {target_res_xml}", inject_arrays)
+        c = c.replace("</resources>", arrays_snippet + "\n</resources>", 1)
+        with open(target_res_xml, "w", encoding="utf-8") as f:
+            f.write(c)
+        print(f"[aerium] Arrays injected uniquely into {target_res_xml}")
+EOF
 
 # --- Step D: Inject into tabs_settings.xml ---
 settings_path = find_canonical_file("tabs_settings.xml", path_hint=os.path.join("res", "xml"))
