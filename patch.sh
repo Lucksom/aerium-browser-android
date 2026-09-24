@@ -703,45 +703,12 @@ find . -name "AeriumBackupFragment.java" -exec sed -i 's/RESTART_SNACKBAR_DURATI
 # ==============================================================================
 echo "==> [26] Injecting True Classic 3D Overlapping Stack Tab Switcher with Settings..."
 
-# --- Step A: Guaranteed clean reset of all candidate files in the git tree ---
-python3 - << 'EOF' || true
-import subprocess, glob, os
-targets = [
-    "TabUiFeatureUtilities.java",
-    "TabListCoordinator.java",
-    "TabListMediator.java",
-    "ClassicStackLayoutManager.java",
-    "tab_management_java_sources.gni",
-    "tabs_settings.xml",
-    "values.xml",
-    "arrays.xml",
-    "android_chrome_strings.grd"
-]
-for target in targets:
-    for f in glob.glob(f"**/{target}", recursive=True):
-        if not f.startswith("out" + os.sep) and f"{os.sep}out{os.sep}" not in f:
-            if target == "ClassicStackLayoutManager.java":
-                try:
-                    os.remove(f)
-                except OSError:
-                    pass
-            else:
-                subprocess.run(["git", "checkout", "-f", "--", f], check=False)
-print("[aerium] Cleaned and reset tab switcher files to upstream state.")
-EOF
-
 python3 - << 'EOF'
-import os, sys, traceback, glob, re
+import os, sys, glob, re, subprocess
 
 def find_canonical_file(filename, path_hint=""):
     out_sub = f"{os.sep}out{os.sep}"
-    test_segments = [
-        f"{os.sep}test{os.sep}",
-        f"{os.sep}tests{os.sep}",
-        f"{os.sep}javatests{os.sep}",
-        f"{os.sep}junit{os.sep}",
-        f"{os.sep}robolectric{os.sep}"
-    ]
+    test_segments = [f"{os.sep}test{os.sep}", f"{os.sep}tests{os.sep}", f"{os.sep}javatests{os.sep}", f"{os.sep}junit{os.sep}", f"{os.sep}robolectric{os.sep}"]
     candidates = glob.glob(f"**/{filename}", recursive=True)
     matches = [
         p for p in candidates
@@ -750,45 +717,112 @@ def find_canonical_file(filename, path_hint=""):
         and (not path_hint or path_hint in p)
     ]
     if not matches:
-        print(f"[FATAL] [aerium] Target file not found: {filename} (hint: '{path_hint}')")
+        print(f"[FATAL] Target file not found: {filename} (hint: '{path_hint}')")
+        sys.exit(1)
+    return matches[0]
+
+# --- 1. HARD CLEAN OF TABLISTCOORDINATOR.JAVA ---
+coord_path = find_canonical_file("TabListCoordinator.java", path_hint=os.path.join("tasks", "tab_management"))
+
+# First attempt: git checkout using the file's directory
+try:
+    subprocess.run(["git", "checkout", "-f", "--", os.path.basename(coord_path)], cwd=os.path.dirname(coord_path), check=False)
+except Exception:
+    pass
+
+# Second attempt: manual sanitization if git checkout didn't reset it
+with open(coord_path, "r", encoding="utf-8") as f:
+    raw_coord = f.read()
+
+# Erase any old/broken injected blocks completely
+if "classicCardHeightPx" in raw_coord or "ClassicStackLayoutManager" in raw_coord:
+    print("[aerium] Purging stale TabListCoordinator modifications from runner disk...")
+    # Revert setLayoutManager
+    raw_coord = re.sub(
+        r'if \(TabUiFeatureUtilities\.isVerticalStackSelected\(\)\)[\s\S]*?mRecyclerView\.setLayoutManager\(gridLayoutManager\);\s*\}',
+        'mRecyclerView.setLayoutManager(gridLayoutManager);',
+        raw_coord
+    )
+    # Revert setDefaultGridCardSize
+    raw_coord = re.sub(
+        r'if \(TabUiFeatureUtilities\.isVerticalStackSelected\(\)\)[\s\S]*?mMediator\.setDefaultGridCardSize\(newDefaultSize\);\s*\}',
+        'mMediator.setDefaultGridCardSize(newDefaultSize);',
+        raw_coord
+    )
+    # Revert layoutType
+    raw_coord = raw_coord.replace(
+        'int layoutType = (actionOnRelatedTabs && !TabUiFeatureUtilities.isTabGroupDisabledForVerticalStack()) ? TabListLayoutType.GROUPED : TabListLayoutType.FLAT;',
+        'int layoutType = actionOnRelatedTabs ? TabListLayoutType.GROUPED : TabListLayoutType.FLAT;'
+    )
+    with open(coord_path, "w", encoding="utf-8") as f:
+        f.write(raw_coord)
+
+# Clean mediator as well
+med_path = find_canonical_file("TabListMediator.java", path_hint=os.path.join("tasks", "tab_management"))
+try:
+    subprocess.run(["git", "checkout", "-f", "--", os.path.basename(med_path)], cwd=os.path.dirname(med_path), check=False)
+except Exception:
+    pass
+
+with open(med_path, "r", encoding="utf-8") as f:
+    raw_med = f.read()
+if "isVerticalStackSelected" in raw_med:
+    raw_med = re.sub(r'int getSpanCount\(int screenWidthDp\) \{\s*if \(TabUiFeatureUtilities\.isVerticalStackSelected\(\)\) \{\s*return 1;\s*\}', 'int getSpanCount(int screenWidthDp) {', raw_med)
+    with open(med_path, "w", encoding="utf-8") as f:
+        f.write(raw_med)
+
+# Clean util as well
+util_path = find_canonical_file("TabUiFeatureUtilities.java", path_hint=os.path.join("tasks", "tab_management"))
+try:
+    subprocess.run(["git", "checkout", "-f", "--", os.path.basename(util_path)], cwd=os.path.dirname(util_path), check=False)
+except Exception:
+    pass
+
+print("[aerium] Source files successfully sanitized.")
+EOF
+
+python3 - << 'EOF'
+import os, sys, traceback, glob, re
+
+def find_canonical_file(filename, path_hint=""):
+    out_sub = f"{os.sep}out{os.sep}"
+    test_segments = [f"{os.sep}test{os.sep}", f"{os.sep}tests{os.sep}", f"{os.sep}javatests{os.sep}", f"{os.sep}junit{os.sep}", f"{os.sep}robolectric{os.sep}"]
+    candidates = glob.glob(f"**/{filename}", recursive=True)
+    matches = [
+        p for p in candidates
+        if out_sub not in p and not p.startswith(f"out{os.sep}")
+        and not any(ts in p.lower() for ts in test_segments)
+        and (not path_hint or path_hint in p)
+    ]
+    if not matches:
+        print(f"[FATAL] Target file not found: {filename} (hint: '{path_hint}')")
         sys.exit(1)
     if len(matches) > 1:
-        print(f"[FATAL] [aerium] Ambiguous matches for {filename}: {matches}")
+        print(f"[FATAL] Ambiguous matches for {filename}: {matches}")
         sys.exit(1)
     return matches[0]
 
 def patch_file(p, desc, func):
     if not os.path.exists(p):
-        print(f"[FATAL] [aerium] Target file not found for {desc}: {p}")
+        print(f"[FATAL] Target file not found for {desc}: {p}")
         sys.exit(1)
-    try:
-        with open(p, "r", encoding="utf-8") as f:
-            content = f.read()
+    with open(p, "r", encoding="utf-8") as f:
+        content = f.read()
+    
+    res = func(content)
+    if res is None:
+        print(f"[FATAL] Patch failed to apply for {desc} in {p}")
+        sys.exit(1)
         
-        res = func(content)
-        if res is None:
-            print(f"[FATAL] [aerium] Patch failed to apply for {desc} in {p}")
-            sys.exit(1)
-            
-        new_content, already_patched = res
-        if already_patched:
-            print(f"[aerium] [ALREADY PATCHED] {desc} in {p}")
-            return True
-            
-        if new_content == content:
-            print(f"[FATAL] [aerium] No changes resulted from {desc} in {p}")
-            sys.exit(1)
-            
-        with open(p, "w", encoding="utf-8") as f:
-            f.write(new_content)
-        print(f"[aerium] [SUCCESS] {desc} in {p}")
+    new_content, already_patched = res
+    if already_patched:
+        print(f"[aerium] [ALREADY PATCHED] {desc} in {p}")
         return True
-    except SystemExit:
-        raise
-    except Exception as e:
-        print(f"[FATAL] [aerium] Exception in {desc} for {p}: {e}")
-        traceback.print_exc()
-        sys.exit(1)
+        
+    with open(p, "w", encoding="utf-8") as f:
+        f.write(new_content)
+    print(f"[aerium] [SUCCESS] {desc} in {p}")
+    return True
 
 # --- Step B: Inject Strings into android_chrome_strings.grd ---
 grd_path = find_canonical_file("android_chrome_strings.grd", path_hint=os.path.join("chrome", "browser", "ui", "android", "strings"))
@@ -820,16 +854,15 @@ def inject_strings(c):
     return None
 patch_file(grd_path, "strings injection", inject_strings)
 
-# --- Step C: Cleanly inject string-arrays into arrays.xml or values.xml ---
+# --- Step C: Preference Arrays in arrays.xml or values.xml ---
 target_res_xml = None
 for candidate in ["chrome/android/java/res/values/arrays.xml", "chrome/android/java/res/values/values.xml"]:
-    if os.path.exists(candidate):
-        target_res_xml = candidate
+    for f in glob.glob(f"**/{os.path.basename(candidate)}", recursive=True):
+        if "out" not in f and "res/values" in f:
+            target_res_xml = f
+            break
+    if target_res_xml:
         break
-
-if not target_res_xml:
-    print("[FATAL] [aerium] Neither arrays.xml nor values.xml found under chrome/android/java/res/values!")
-    sys.exit(1)
 
 def inject_arrays(c):
     if "aerium_tab_switcher_entries" in c:
@@ -852,11 +885,8 @@ def inject_arrays(c):
     return None
 patch_file(target_res_xml, f"preference arrays injection into {target_res_xml}", inject_arrays)
 
-# --- Step D: Inject ListPreference into tabs_settings.xml ---
-settings_path = "chrome/android/features/tab_ui/java/res/xml/tabs_settings.xml"
-if not os.path.exists(settings_path):
-    settings_path = find_canonical_file("tabs_settings.xml", path_hint=os.path.join("res", "xml"))
-
+# --- Step D: Inject into tabs_settings.xml ---
+settings_path = find_canonical_file("tabs_settings.xml", path_hint=os.path.join("res", "xml"))
 def inject_pref(c):
     if 'android:key="aerium_tab_switcher_mode"' in c:
         return (c, True)
@@ -923,9 +953,6 @@ import android.view.View;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
-/**
- * Recreates the authentic Chromium 88 OverlappingStack 3D perspective and card cascade.
- */
 public class ClassicStackLayoutManager extends LinearLayoutManager {
     private static final float SCALE_AMOUNT = 0.85f;
     private static final float TILT_ANGLE_DEGREES = 8.5f;
@@ -998,7 +1025,7 @@ public class ClassicStackLayoutManager extends LinearLayoutManager {
 """)
 print(f"[aerium] [SUCCESS] Created {stack_lm_path}")
 
-# --- Register ClassicStackLayoutManager.java in tab_management_java_sources.gni ---
+# --- Register in tab_management_java_sources.gni ---
 gni_path = find_canonical_file("tab_management_java_sources.gni", path_hint=os.path.join("features", "tab_ui"))
 def patch_gni(c):
     if "ClassicStackLayoutManager.java" in c:
@@ -1010,29 +1037,20 @@ def patch_gni(c):
         print("[FATAL] Could not find TabListCoordinator.java in tab_management_java_sources.gni!")
         return None
     return (c, False)
-
 patch_file(gni_path, "ClassicStackLayoutManager registration in tab_management_java_sources.gni", patch_gni)
 
 # --- Step G: Patch TabListCoordinator.java ---
 def patch_coord(c):
-    # If the file already has the bad code, strip it so we can re-patch cleanly
-    if "newDefaultSize = new Size" in c:
-        print("[aerium] Detected previously broken TabListCoordinator, cleaning before patch...")
-        c = re.sub(r'if \(TabUiFeatureUtilities\.isVerticalStackSelected\(\)\)[\s\S]*?mMediator\.setDefaultGridCardSize\(newDefaultSize\);\s*\}', 'mMediator.setDefaultGridCardSize(newDefaultSize);', c)
-        c = re.sub(r'if \(TabUiFeatureUtilities\.isVerticalStackSelected\(\)\)[\s\S]*?mRecyclerView\.setLayoutManager\(gridLayoutManager\);\s*\}', 'mRecyclerView.setLayoutManager(gridLayoutManager);', c)
-
-    if "ClassicStackLayoutManager" in c and "newDefaultSize = new Size" not in c:
-        return (c, True)
-
-    # 1. Disable UI grouping if Mode 2 is selected (forces TabListLayoutType.FLAT)
+    # 1. Disable UI grouping if Mode 2 is selected
     pattern_layout = r'int\s+layoutType\s*=\s*actionOnRelatedTabs\s*\?\s*TabListLayoutType\.GROUPED\s*:\s*TabListLayoutType\.FLAT\s*;'
     repl_layout = 'int layoutType = (actionOnRelatedTabs && !TabUiFeatureUtilities.isTabGroupDisabledForVerticalStack()) ? TabListLayoutType.GROUPED : TabListLayoutType.FLAT;'
-    c, n1 = re.subn(pattern_layout, repl_layout, c, count=1)
-    if n1 != 1 and "isTabGroupDisabledForVerticalStack" not in c:
-        print(f"[FATAL] Sub-patch 1 (layoutType) failed in TabListCoordinator!")
-        return None
+    if "isTabGroupDisabledForVerticalStack" not in c:
+        c, n1 = re.subn(pattern_layout, repl_layout, c, count=1)
+        if n1 != 1:
+            print("[FATAL] Sub-patch 1 (layoutType) failed in TabListCoordinator!")
+            return None
 
-    # 2. Attach ClassicStackLayoutManager & disable clipping on the RecyclerView
+    # 2. Attach ClassicStackLayoutManager
     pattern_rv = r'mRecyclerView\.setLayoutManager\(\s*gridLayoutManager\s*\);'
     repl_rv = """if (TabUiFeatureUtilities.isVerticalStackSelected()) {
             ClassicStackLayoutManager stackManager = new ClassicStackLayoutManager(mRecyclerView.getContext());
@@ -1042,12 +1060,13 @@ def patch_coord(c):
         } else {
             mRecyclerView.setLayoutManager(gridLayoutManager);
         }"""
-    c, n2 = re.subn(pattern_rv, repl_rv, c, count=1)
-    if n2 != 1 and "ClassicStackLayoutManager stackManager" not in c:
-        print(f"[FATAL] Sub-patch 2 (setLayoutManager) failed in TabListCoordinator!")
-        return None
+    if "ClassicStackLayoutManager stackManager" not in c:
+        c, n2 = re.subn(pattern_rv, repl_rv, c, count=1)
+        if n2 != 1:
+            print("[FATAL] Sub-patch 2 (setLayoutManager) failed in TabListCoordinator!")
+            return None
 
-    # 3. Exact Chromium 88 Card Size with guaranteed non-zero fallbacks (avoids final reassignment)
+    # 3. Exact Chromium 88 Card Size (NO REASSIGNMENT OF newDefaultSize)
     pattern_size = r'mMediator\.setDefaultGridCardSize\(\s*newDefaultSize\s*\);'
     repl_size = """if (TabUiFeatureUtilities.isVerticalStackSelected()) {
             int rvWidth = mRecyclerView.getWidth();
@@ -1058,10 +1077,11 @@ def patch_coord(c):
         } else {
             mMediator.setDefaultGridCardSize(newDefaultSize);
         }"""
-    c, n3 = re.subn(pattern_size, repl_size, c, count=1)
-    if n3 != 1:
-        print(f"[FATAL] Sub-patch 3 (setDefaultGridCardSize) failed in TabListCoordinator!")
-        return None
+    if "classicWidth" not in c:
+        c, n3 = re.subn(pattern_size, repl_size, c, count=1)
+        if n3 != 1:
+            print("[FATAL] Sub-patch 3 (setDefaultGridCardSize) failed in TabListCoordinator!")
+            return None
 
     return (c, False)
 
@@ -1079,10 +1099,9 @@ def patch_mediator(c):
         }"""
     c, n = re.subn(pattern_span, repl_span, c, count=1)
     if n != 1:
-        print(f"[FATAL] SpanCount override failed in TabListMediator!")
+        print("[FATAL] SpanCount override failed in TabListMediator!")
         return None
     return (c, False)
-
 patch_file(mediator_path, "TabListMediator span count override", patch_mediator)
 
 EOF
@@ -1090,9 +1109,6 @@ EOF
 # Invalidate intermediate javac jars to force clean recompilation
 find . -path "*/obj/chrome/android/chrome_java/*" -name "*.jar" -delete 2>/dev/null || true
 find . -path "*/obj/chrome/android/features/tab_ui/*" -name "*.jar" -delete 2>/dev/null || true
-
-
-
 
 # ==============================================================================
 # [27] ENTERPRISE DEEP SCAN CALLS BYPASS
