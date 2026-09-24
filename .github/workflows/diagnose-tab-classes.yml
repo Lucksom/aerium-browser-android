@@ -1,10 +1,10 @@
-name: Inspect Tab Strip Scene Layer (multi-tab template)
+name: Diagnose Tab UI GN Targets & Paths
 
 on:
   workflow_dispatch:
 
 jobs:
-  inspect:
+  diagnose:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -13,30 +13,37 @@ jobs:
 
       - name: Resolve Chromium version
         run: |
-          VERSION=$(grep -m1 -o '[0-9]\+\(\.[0-9]\+\)\{3\}' vanadium/args.gn)
+          VERSION=$(grep -m1 -o '[0-9]\+\(\.[0-9]\+\)\{3\}' vanadium/args.gn || echo "153.0.8010.36")
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "Checking tag: $VERSION"
 
-      - name: Partial clone (tree metadata only)
+      - name: Partial clone (tree metadata only - fast)
         run: |
           git clone --filter=blob:none --no-checkout --depth 1 \
             --branch "$VERSION" \
             https://chromium.googlesource.com/chromium/src.git chromium-src
 
-      - name: Show tab_strip_scene_layer.h and .cc in full
+      - name: Locate Tab UI BUILD.gn and exact GN target names
         working-directory: chromium-src
         run: |
           set +e
-          echo "===== chrome/browser/android/compositor/scene_layer/tab_strip_scene_layer.h ====="
-          git show "$VERSION:chrome/browser/android/compositor/scene_layer/tab_strip_scene_layer.h"
-          echo
-          echo "===== chrome/browser/android/compositor/scene_layer/tab_strip_scene_layer.cc ====="
-          git show "$VERSION:chrome/browser/android/compositor/scene_layer/tab_strip_scene_layer.cc"
+          echo "=== 1. Searching for BUILD.gn files in tab_ui and tab_management ==="
+          git ls-tree -r --name-only "$VERSION" | grep -E "(tab_ui|tab_management)/BUILD\.gn" | tee /tmp/build_files.txt
 
-      - name: Show its Java counterpart for the full add/remove/update API shape
-        working-directory: chromium-src
-        run: |
-          set +e
-          git ls-tree -r --name-only "$VERSION" > /tmp/all_paths.txt
-          f=$(grep -E "TabStripSceneLayer\.java$" /tmp/all_paths.txt | head -1)
-          echo "===== $f ====="
-          git show "$VERSION:$f" 2>/dev/null
+          echo
+          echo "=== 2. Inspecting android_library targets in chrome/android/features/tab_ui/BUILD.gn ==="
+          TAB_UI_GN=$(grep "chrome/android/features/tab_ui/BUILD.gn" /tmp/build_files.txt | head -1)
+          if [ -n "$TAB_UI_GN" ]; then
+            git show "$VERSION:$TAB_UI_GN" | grep -E -A 10 "(android_library|java_library)" | head -n 40
+          fi
+
+          echo
+          echo "=== 3. Finding exact path of tabs_settings.xml and values.xml ==="
+          git ls-tree -r --name-only "$VERSION" | grep -E "(tabs_settings\.xml|values/values\.xml|values/arrays\.xml)"
+
+          echo
+          echo "=== 4. Checking chrome_java dependencies for tab_ui ==="
+          CHROME_JAVA_GN=$(git ls-tree -r --name-only "$VERSION" | grep -E "chrome/android/BUILD\.gn" | head -1)
+          if [ -n "$CHROME_JAVA_GN" ]; then
+            git show "$VERSION:$CHROME_JAVA_GN" | grep -E -B 2 -A 5 "tab_ui" | head -n 30
+          fi
