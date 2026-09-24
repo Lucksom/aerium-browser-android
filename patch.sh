@@ -698,7 +698,6 @@ EOF
 echo "==> Fixing RESTART_SNACKBAR_DURATION_MS in AeriumBackupFragment..."
 find . -name "AeriumBackupFragment.java" -exec sed -i 's/RESTART_SNACKBAR_DURATION_MS/6000/g' {} + 2>/dev/null || true
 
-
 # ==============================================================================
 # [26] AERIUM CLASSIC 3D OVERLAPPING STACK TAB SWITCHER (CHROMIUM 88 ENGINE)
 # ==============================================================================
@@ -892,7 +891,7 @@ def patch_util(c):
     return None
 patch_file(util_path, "TabUiFeatureUtilities helpers", patch_util)
 
-# --- Step F: Create ClassicStackLayoutManager.java ---
+# --- Step F: Create ClassicStackLayoutManager.java (Exact M88 Physics & Scale) ---
 coord_path = find_canonical_file("TabListCoordinator.java", path_hint=os.path.join("tasks", "tab_management"))
 stack_lm_path = os.path.join(os.path.dirname(coord_path), "ClassicStackLayoutManager.java")
 
@@ -910,13 +909,14 @@ import androidx.recyclerview.widget.RecyclerView;
 
 /**
  * Recreates the authentic Chromium 88 OverlappingStack 3D perspective and card cascade.
- * Cards cascade backward with 8.5 degree tilt, overlapping headers, and top-edge compression.
+ * Cards cascade backward with 8.5 degree tilt, 85% width ratio, 64dp header peek, and top-edge compression.
  */
 public class ClassicStackLayoutManager extends LinearLayoutManager {
-    private static final float SCALE_AMOUNT = 0.90f;
+    // Exact Chromium 88 OverlappingStack proportions:
+    private static final float SCALE_AMOUNT = 0.85f;
     private static final float TILT_ANGLE_DEGREES = 8.5f;
     private static final int MAX_STACKED_TABS_TOP = 3;
-    private static final int PEEK_HEADER_DP = 72;
+    private static final int PEEK_HEADER_DP = 64;
     
     private final float mDensity;
     private final int mPeekHeaderPx;
@@ -963,7 +963,7 @@ public class ClassicStackLayoutManager extends LinearLayoutManager {
             child.setPivotY(0.0f);
             child.setRotationX(TILT_ANGLE_DEGREES);
 
-            // 3. Floating Card Deck 90% Scale
+            // 3. Classic 85% Floating Card Width
             child.setScaleX(SCALE_AMOUNT);
             child.setScaleY(SCALE_AMOUNT);
 
@@ -989,7 +989,7 @@ public class ClassicStackLayoutManager extends LinearLayoutManager {
 """)
 print(f"[aerium] [SUCCESS] Created {stack_lm_path}")
 
-# --- Register ClassicStackLayoutManager.java in tab_management_java_sources.gni (via patch_file) ---
+# --- Register ClassicStackLayoutManager.java in tab_management_java_sources.gni ---
 gni_path = find_canonical_file("tab_management_java_sources.gni", path_hint=os.path.join("features", "tab_ui"))
 def patch_gni(c):
     if "ClassicStackLayoutManager.java" in c:
@@ -1004,7 +1004,7 @@ def patch_gni(c):
 
 patch_file(gni_path, "ClassicStackLayoutManager registration in tab_management_java_sources.gni", patch_gni)
 
-# --- Step G: Patch TabListCoordinator.java (Exact Source Alignment Verified) ---
+# --- Step G: Patch TabListCoordinator.java (Exact M88 Card Dimensions without final reassignment) ---
 def patch_coord(c):
     if "ClassicStackLayoutManager" in c:
         return (c, True)
@@ -1032,7 +1032,7 @@ def patch_coord(c):
         print(f"[FATAL] Sub-patch 2 (setLayoutManager) failed in TabListCoordinator!")
         return None
 
-    # 3. Exact Chromium 88 Card Size
+    # 3. Exact Chromium 88 Card Size with guaranteed non-zero fallbacks (avoids final reassignment)
     pattern_size = r'mMediator\.setDefaultGridCardSize\(\s*newDefaultSize\s*\);'
     repl_size = """if (TabUiFeatureUtilities.isVerticalStackSelected()) {
             int rvWidth = mRecyclerView.getWidth();
@@ -1047,6 +1047,9 @@ def patch_coord(c):
     if n3 != 1:
         print(f"[FATAL] Sub-patch 3 (setDefaultGridCardSize) failed in TabListCoordinator!")
         return None
+
+    return (c, False)
+
 patch_file(coord_path, "TabListCoordinator layout & manager setup", patch_coord)
 
 # --- Step H: Patch TabListMediator.java (spanCount = 1 in vertical mode) ---
@@ -1071,7 +1074,7 @@ EOF
 
 # Invalidate intermediate javac jars to force clean recompilation
 find . -path "*/obj/chrome/android/chrome_java/*" -name "*.jar" -delete 2>/dev/null || true
-find . -path "*/obj/chrome/android/features/tab_ui/*" -name "*.jar" -delete 2>/dev/null || true
+find . -path "*/obj/chrome/android/features/tab_ui/*" -name "*.jar" -delete 2>/dev/null || true  
 
 
 # ==============================================================================
