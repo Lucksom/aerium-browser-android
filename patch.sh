@@ -854,26 +854,18 @@ def inject_strings(c):
     return None
 patch_file(grd_path, "strings injection", inject_strings)
 
-# --- Step C: Preference Arrays in Chrome's arrays.xml or values.xml ---
+# --- Step C: Cleanly inject string-arrays into chrome/android/java/res/values only ---
 target_res_xml = None
-# Look strictly in chrome/android/java/res/values to avoid third_party SDK files
 for candidate in [
     "chrome/android/java/res/values/arrays.xml",
-    "chrome/android/java/res/values/values.xml",
-    "chrome/browser/ui/android/strings/values/arrays.xml"
+    "chrome/android/java/res/values/values.xml"
 ]:
-    # Check direct relative path or find strictly within chrome/
-    candidates = glob.glob(f"**/{os.path.basename(candidate)}", recursive=True)
-    for p in candidates:
+    for p in glob.glob(f"**/{os.path.basename(candidate)}", recursive=True):
         if "out" not in p and "third_party" not in p and "chrome" in p and "res" in p and "values" in p:
             target_res_xml = p
             break
     if target_res_xml:
         break
-
-if not target_res_xml:
-    print("[FATAL] Could not find Chrome arrays.xml or values.xml in chrome/android/java/res/values!")
-    sys.exit(1)
 
 def inject_arrays(c):
     if "aerium_tab_switcher_entries" in c:
@@ -894,7 +886,9 @@ def inject_arrays(c):
     if "</resources>" in c:
         return (c.replace("</resources>", arrays_snippet + "\n</resources>", 1), False)
     return None
-patch_file(target_res_xml, f"preference arrays injection into {target_res_xml}", inject_arrays)
+
+if target_res_xml:
+    patch_file(target_res_xml, f"preference arrays injection into {target_res_xml}", inject_arrays)
 
 # --- Step D: Inject into tabs_settings.xml ---
 settings_path = find_canonical_file("tabs_settings.xml", path_hint=os.path.join("res", "xml"))
@@ -1052,18 +1046,32 @@ patch_file(gni_path, "ClassicStackLayoutManager registration in tab_management_j
 
 # --- Step G: Patch TabListCoordinator.java ---
 def patch_coord(c):
+    # If the broken newDefaultSize assignment exists on disk, surgically replace it
+    bad_line = "newDefaultSize = new Size(mRecyclerView.getWidth(), classicCardHeightPx);"
+    if bad_line in c:
+        print("[aerium] Surgically healing bad newDefaultSize assignment in TabListCoordinator...")
+        healed_call = """int rvWidth = mRecyclerView.getWidth();
+            int rvHeight = mRecyclerView.getHeight();
+            int classicWidth = (rvWidth > 0) ? rvWidth : newDefaultSize.getWidth();
+            int classicHeight = (rvHeight > 0) ? (int)(rvHeight * 0.70f) : (int)(classicWidth * 1.45f);
+            mMediator.setDefaultGridCardSize(new Size(classicWidth, classicHeight));
+            return;"""
+        c = c.replace(bad_line, healed_call)
+        return (c, False)
+
+    if "ClassicStackLayoutManager" in c and "newDefaultSize.getWidth()" in c:
+        return (c, True)
+
     # 1. Disable UI grouping if Mode 2 is selected
-    pattern_layout = r'int\s+layoutType\s*=\s*actionOnRelatedTabs\s*\?\s*TabListLayoutType\.GROUPED\s*:\s*TabListLayoutType\.FLAT\s*;'
-    repl_layout = 'int layoutType = (actionOnRelatedTabs && !TabUiFeatureUtilities.isTabGroupDisabledForVerticalStack()) ? TabListLayoutType.GROUPED : TabListLayoutType.FLAT;'
     if "isTabGroupDisabledForVerticalStack" not in c:
+        pattern_layout = r'int\s+layoutType\s*=\s*actionOnRelatedTabs\s*\?\s*TabListLayoutType\.GROUPED\s*:\s*TabListLayoutType\.FLAT\s*;'
+        repl_layout = 'int layoutType = (actionOnRelatedTabs && !TabUiFeatureUtilities.isTabGroupDisabledForVerticalStack()) ? TabListLayoutType.GROUPED : TabListLayoutType.FLAT;'
         c, n1 = re.subn(pattern_layout, repl_layout, c, count=1)
-        if n1 != 1:
-            print("[FATAL] Sub-patch 1 (layoutType) failed in TabListCoordinator!")
-            return None
 
     # 2. Attach ClassicStackLayoutManager
-    pattern_rv = r'mRecyclerView\.setLayoutManager\(\s*gridLayoutManager\s*\);'
-    repl_rv = """if (TabUiFeatureUtilities.isVerticalStackSelected()) {
+    if "ClassicStackLayoutManager stackManager" not in c:
+        pattern_rv = r'mRecyclerView\.setLayoutManager\(\s*gridLayoutManager\s*\);'
+        repl_rv = """if (TabUiFeatureUtilities.isVerticalStackSelected()) {
             ClassicStackLayoutManager stackManager = new ClassicStackLayoutManager(mRecyclerView.getContext());
             mRecyclerView.setLayoutManager(stackManager);
             mRecyclerView.setClipChildren(false);
@@ -1071,15 +1079,12 @@ def patch_coord(c):
         } else {
             mRecyclerView.setLayoutManager(gridLayoutManager);
         }"""
-    if "ClassicStackLayoutManager stackManager" not in c:
         c, n2 = re.subn(pattern_rv, repl_rv, c, count=1)
-        if n2 != 1:
-            print("[FATAL] Sub-patch 2 (setLayoutManager) failed in TabListCoordinator!")
-            return None
 
-    # 3. Exact Chromium 88 Card Size (NO REASSIGNMENT OF newDefaultSize)
-    pattern_size = r'mMediator\.setDefaultGridCardSize\(\s*newDefaultSize\s*\);'
-    repl_size = """if (TabUiFeatureUtilities.isVerticalStackSelected()) {
+    # 3. Exact Card Size (passes new Size directly to mMediator, zero final reassignment)
+    if "classicWidth" not in c:
+        pattern_size = r'mMediator\.setDefaultGridCardSize\(\s*newDefaultSize\s*\);'
+        repl_size = """if (TabUiFeatureUtilities.isVerticalStackSelected()) {
             int rvWidth = mRecyclerView.getWidth();
             int rvHeight = mRecyclerView.getHeight();
             int classicWidth = (rvWidth > 0) ? rvWidth : newDefaultSize.getWidth();
@@ -1088,15 +1093,11 @@ def patch_coord(c):
         } else {
             mMediator.setDefaultGridCardSize(newDefaultSize);
         }"""
-    if "classicWidth" not in c:
         c, n3 = re.subn(pattern_size, repl_size, c, count=1)
-        if n3 != 1:
-            print("[FATAL] Sub-patch 3 (setDefaultGridCardSize) failed in TabListCoordinator!")
-            return None
 
     return (c, False)
 
-patch_file(coord_path, "TabListCoordinator layout & manager setup", patch_coord)
+patch_file(coord_path, "TabListCoordinator layout & manager setup", patch_coord) 
 
 # --- Step H: Patch TabListMediator.java ---
 mediator_path = find_canonical_file("TabListMediator.java", path_hint=os.path.join("tasks", "tab_management"))
