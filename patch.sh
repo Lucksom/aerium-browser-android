@@ -910,6 +910,8 @@ if target_res_xml:
             f.write(c)
         print(f"[aerium] Arrays injected uniquely into {target_res_xml}")
 EOF
+find . -path "*/obj/chrome/android/features/tab_ui/*resources*" -delete 2>/dev/null || true
+find . -path "*/obj/chrome/android/chrome_app_java_resources*" -delete 2>/dev/null || true
 
 # --- Step D: Inject into tabs_settings.xml ---
 settings_path = find_canonical_file("tabs_settings.xml", path_hint=os.path.join("res", "xml"))
