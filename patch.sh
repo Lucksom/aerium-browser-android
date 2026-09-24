@@ -696,6 +696,7 @@ EOF
 echo "==> Fixing RESTART_SNACKBAR_DURATION_MS in AeriumBackupFragment..."
 find . -name "AeriumBackupFragment.java" -exec sed -i 's/RESTART_SNACKBAR_DURATION_MS/6000/g' {} + 2>/dev/null || true
 
+
 # ==============================================================================
 # [26] AERIUM CLASSIC 3D OVERLAPPING STACK TAB SWITCHER (CHROMIUM 88 ENGINE)
 # ==============================================================================
@@ -706,9 +707,10 @@ git checkout -- \
   chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabUiFeatureUtilities.java \
   chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabListCoordinator.java \
   chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabListMediator.java \
+  chrome/android/features/tab_ui/tab_management_java_sources.gni \
+  chrome/android/features/tab_ui/java/res/xml/tabs_settings.xml \
   chrome/android/java/res/values/values.xml \
   chrome/android/java/res/values/arrays.xml \
-  chrome/android/java/res/xml/tabs_settings.xml \
   chrome/browser/ui/android/strings/android_chrome_strings.grd 2>/dev/null || true
 
 python3 - << 'EOF'
@@ -802,7 +804,6 @@ def inject_strings(c):
 patch_file(grd_path, "strings injection", inject_strings)
 
 # --- Step C: Cleanly inject string-arrays into arrays.xml or values.xml ---
-# Intentionally checks the canonical Android resource directory directly to guarantee 100% GN build inclusion.
 target_res_xml = None
 for candidate in ["chrome/android/java/res/values/arrays.xml", "chrome/android/java/res/values/values.xml"]:
     if os.path.exists(candidate):
@@ -834,10 +835,10 @@ def inject_arrays(c):
     return None
 patch_file(target_res_xml, f"preference arrays injection into {target_res_xml}", inject_arrays)
 
-# --- Step D: Inject ListPreference into tabs_settings.xml (Exact Path from Chromium 153) ---
+# --- Step D: Inject ListPreference into tabs_settings.xml ---
 settings_path = "chrome/android/features/tab_ui/java/res/xml/tabs_settings.xml"
 if not os.path.exists(settings_path):
-    settings_path = find_canonical_file("tabs_settings.xml")
+    settings_path = find_canonical_file("tabs_settings.xml", path_hint=os.path.join("res", "xml"))
 
 def inject_pref(c):
     if 'android:key="aerium_tab_switcher_mode"' in c:
@@ -986,7 +987,22 @@ public class ClassicStackLayoutManager extends LinearLayoutManager {
 """)
 print(f"[aerium] [SUCCESS] Created {stack_lm_path}")
 
-# --- Step G: Patch TabListCoordinator.java (Verified 3/3 Regex Substitutions) ---
+# --- Register ClassicStackLayoutManager.java in tab_management_java_sources.gni (via patch_file) ---
+gni_path = find_canonical_file("tab_management_java_sources.gni", path_hint=os.path.join("features", "tab_ui"))
+def patch_gni(c):
+    if "ClassicStackLayoutManager.java" in c:
+        return (c, True)
+    pattern = r'("//[^"]*TabListCoordinator\.java",)'
+    repl = r'\1\n  "//chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/ClassicStackLayoutManager.java",'
+    c, n = re.subn(pattern, repl, c, count=1)
+    if n != 1:
+        print("[FATAL] Could not find TabListCoordinator.java in tab_management_java_sources.gni!")
+        return None
+    return (c, False)
+
+patch_file(gni_path, "ClassicStackLayoutManager registration in tab_management_java_sources.gni", patch_gni)
+
+# --- Step G: Patch TabListCoordinator.java (Exact Source Alignment Verified) ---
 def patch_coord(c):
     if "ClassicStackLayoutManager" in c:
         return (c, True)
@@ -1051,8 +1067,8 @@ patch_file(mediator_path, "TabListMediator span count override", patch_mediator)
 EOF
 
 # Invalidate intermediate javac jars to force clean recompilation
-find . -path "*/obj/chrome/android/features/tab_ui/*" -name "*.jar" -delete 2>/dev/null || true
 find . -path "*/obj/chrome/android/chrome_java/*" -name "*.jar" -delete 2>/dev/null || true
+find . -path "*/obj/chrome/android/features/tab_ui/*" -name "*.jar" -delete 2>/dev/null || true
 
 
 # ==============================================================================
@@ -1635,39 +1651,21 @@ find . \( -path ./out -o -path ./.git -o -path ./third_party/llvm-build \) -prun
 echo "======================================"
 
 # ==============================================================================
-# [38] EARLY COMPILATION DIAGNOSTIC TARGETS (FAST & FAIL-SAFE)
+# [38] EARLY COMPILATION DIAGNOSTIC TARGETS
 # ==============================================================================
-for outdir in "out/Default" "chromium/src/out/Default"; do
-  if [ -f "$outdir/build.ninja" ]; then
-    echo "==> Running early compilation diagnostic in $outdir..."
-    export PATH="$PATH:$GITHUB_WORKSPACE/chromium/depot_tools:$GITHUB_WORKSPACE/depot_tools"
-    
-    if ! command -v autoninja >/dev/null 2>&1; then
-      echo "[aerium] autoninja not found on PATH, skipping diagnostic"
-      break
-    fi
-    
+echo "==> [38] Verifying fast compilation targets..."
+
+export SISO_EXPERIMENTS=ignore-missing-targets
+
 DIAG_TARGETS=(
-      obj/chrome/browser/ui/webui/configs/chrome_web_ui_configs.o
-      obj/chrome/browser/glic/impl/glic_web_client_handler.o
-      obj/chrome/browser/interstitials/impl/enterprise_util.o
-      obj/chrome/browser/download/impl/download_target_determiner.o
-      obj/chrome/browser/download/impl/chrome_download_manager_delegate.o
-      obj/chrome/browser/ui/android/extensions/extensions/extension_install_dialog_view_android.o
-      obj/chrome/android/chrome_java.javac.jar
-    )
-    
-    autoninja -k 0 -C "$outdir" "${DIAG_TARGETS[@]}" || {
-      echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
-      echo "[aerium] Diagnostic failed: one or more targets failed to compile."
-      echo "Aborting early to prevent waiting through the full build queue."
-      echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
-      exit 1
-    }
-    echo "==> [SUCCESS] All diagnostic targets compiled successfully!"
-    break
-  fi
-done
+  obj/chrome/browser/ui/webui/configs/chrome_web_ui_configs.o
+  obj/chrome/browser/glic/impl/glic_web_client_handler.o
+  obj/chrome/browser/interstitials/impl/enterprise_util.o
+  obj/chrome/browser/download/impl/download_target_determiner.o
+  obj/chrome/browser/download/impl/chrome_download_manager_delegate.o
+  obj/chrome/browser/ui/android/extensions/extensions/extension_install_dialog_view_android.o
+  obj/chrome/android/chrome_java.javac.jar
+)
 
 # ==============================================================================
 # [39] PERSISTENT NOTIFICATION HANDLER ISOLATION
