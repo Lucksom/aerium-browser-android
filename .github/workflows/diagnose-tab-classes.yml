@@ -1,4 +1,4 @@
-name: Inspect Tab UI Real Sources (M153)
+name: Inspect TabListCoordinator
 
 on:
   workflow_dispatch:
@@ -8,12 +8,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: true
 
       - name: Resolve Chromium version
         run: |
-          VERSION=$(grep -m1 -o '[0-9]\+\(\.[0-9]\+\)\{3\}' vanadium/args.gn || echo "153.0.8010.36")
+          VERSION=$(grep -m1 -o '[0-9]\+\(\.[0-9]\+\)\{3\}' vanadium/args.gn)
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
-          echo "Inspecting tag: $VERSION"
+          echo "Resolved Chromium version: $VERSION"
 
       - name: Partial clone (tree metadata only)
         run: |
@@ -21,34 +23,40 @@ jobs:
             --branch "$VERSION" \
             https://chromium.googlesource.com/chromium/src.git chromium-src
 
-      - name: 1. Inspect TabListCoordinator.java (layoutType, setLayoutManager, setDefaultGridCardSize)
+      - name: Locate the real TabListCoordinator.java path
         working-directory: chromium-src
         run: |
           set +e
-          COORDINATOR=$(git ls-tree -r --name-only "$VERSION" | grep -E "tasks/tab_management/TabListCoordinator\.java$" | head -1)
-          echo "===== $COORDINATOR ====="
-          git show "$VERSION:$COORDINATOR" | grep -n -C 5 -E "(layoutType =|setLayoutManager|setDefaultGridCardSize)"
+          git ls-tree -r --name-only "$VERSION" > /tmp/all_paths.txt
+          echo "### All matches for TabListCoordinator.java ###"
+          grep -E "TabListCoordinator\.java$" /tmp/all_paths.txt
 
-      - name: 2. Inspect TabListMediator.java (getSpanCount)
+      - name: Fetch the real file and grep the exact lines this patch depends on
         working-directory: chromium-src
         run: |
           set +e
-          MEDIATOR=$(git ls-tree -r --name-only "$VERSION" | grep -E "tasks/tab_management/TabListMediator\.java$" | head -1)
-          echo "===== $MEDIATOR ====="
-          git show "$VERSION:$MEDIATOR" | grep -n -C 5 -E "int getSpanCount"
+          f=$(grep -E "TabListCoordinator\.java$" /tmp/all_paths.txt | head -1)
+          echo "Using: $f"
+          git show "$VERSION:$f" > /tmp/TabListCoordinator.java 2>/dev/null
 
-      - name: 3. Inspect tab_management_java_sources.gni (TabListCoordinator entry)
-        working-directory: chromium-src
-        run: |
-          set +e
-          GNI=$(git ls-tree -r --name-only "$VERSION" | grep -E "tab_management_java_sources\.gni$" | head -1)
-          echo "===== $GNI ====="
-          git show "$VERSION:$GNI" | grep -n -C 3 "TabListCoordinator\.java"
+          echo
+          echo "### setDefaultGridCardSize call sites (with context) ###"
+          grep -n -B3 -A1 "setDefaultGridCardSize" /tmp/TabListCoordinator.java
 
-      - name: 4. Inspect TabUiFeatureUtilities.java (end of class)
+          echo
+          echo "### setLayoutManager call sites (with context) ###"
+          grep -n -B3 -A1 "setLayoutManager" /tmp/TabListCoordinator.java
+
+          echo
+          echo "### layoutType / TabListLayoutType.GROUPED logic ###"
+          grep -n -B2 -A2 "TabListLayoutType.GROUPED\|TabListLayoutType.FLAT" /tmp/TabListCoordinator.java
+
+          echo
+          echo "### GridLayoutManager references ###"
+          grep -n "GridLayoutManager" /tmp/TabListCoordinator.java
+
+      - name: Show full file content
         working-directory: chromium-src
         run: |
-          set +e
-          UTIL=$(git ls-tree -r --name-only "$VERSION" | grep -E "tasks/tab_management/TabUiFeatureUtilities\.java$" | head -1)
-          echo "===== $UTIL (tail) ====="
-          git show "$VERSION:$UTIL" | tail -n 25
+          echo "===== FULL TabListCoordinator.java ====="
+          cat /tmp/TabListCoordinator.java
