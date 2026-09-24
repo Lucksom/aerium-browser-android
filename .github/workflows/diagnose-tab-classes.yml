@@ -1,4 +1,4 @@
-name: Inspect Layout Contract
+name: Inspect Layout Contract v2
 
 on:
   workflow_dispatch:
@@ -16,36 +16,49 @@ jobs:
           VERSION=$(grep -m1 -o '[0-9]\+\(\.[0-9]\+\)\{3\}' vanadium/args.gn)
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
 
-      - name: Partial clone (tree metadata only)
+      - name: Partial clone + one sparse-checkout of the layouts module
         run: |
-          git clone --filter=blob:none --no-checkout --depth 1 \
+          git clone --filter=blob:none --sparse --no-checkout --depth 1 \
             --branch "$VERSION" \
             https://chromium.googlesource.com/chromium/src.git chromium-src
+          cd chromium-src
+          git sparse-checkout set \
+            chrome/browser/ui/android/layouts \
+            chrome/browser/compositor
+          git checkout "$VERSION"
 
-      - name: Fetch and inspect key files on demand
+      - name: Find surviving Layout subclasses with gesture/drag behavior
         working-directory: chromium-src
         run: |
           set +e
-          show() {
-            echo "===== $1 ====="
-            git show "$VERSION:$1" 2>/dev/null || echo "!!! could not fetch $1"
-          }
-
-          echo "### Layout.java: how does it wire up a scene layer? ###"
-          show chrome/browser/ui/android/layouts/java/src/org/chromium/chrome/browser/layouts/Layout.java \
-            | grep -n -B2 -A5 -i "scenelayer\|getSceneLayer"
+          echo "### Layout subclasses still in the tree ###"
+          grep -rl "extends Layout\b" --include=*.java . 2>/dev/null
 
           echo
-          echo "### EventFilter.java: current touch-callback contract ###"
-          show chrome/browser/ui/android/layouts/java/src/org/chromium/chrome/browser/layouts/EventFilter.java \
-            | grep -n -B1 -A3 "void \|boolean \|interface \|abstract "
+          echo "### Classes extending EventFilter (current gesture pattern) ###"
+          grep -rl "extends EventFilter\b" --include=*.java . 2>/dev/null
 
           echo
-          echo "### Any class still implementing pinch/fling/onLongPress-style callbacks? ###"
-          git ls-tree -r --name-only "$VERSION" > /tmp/all_paths.txt
-          grep -E "layouts/.*\.java$" /tmp/all_paths.txt | while read -r f; do
-            content=$(git show "$VERSION:$f" 2>/dev/null)
-            if echo "$content" | grep -q "onPinch\|onLongPress.*float.*float"; then
-              echo "MATCH: $f"
-            fi
-          done
+          echo "### GestureDetector / ScaleGestureDetector usage anywhere here ###"
+          grep -rln "GestureDetector\|ScaleGestureDetector" --include=*.java . 2>/dev/null
+
+          echo
+          echo "### Any SceneOverlay-based rendering (Android-View-backed overlay) ###"
+          grep -rln "SceneOverlay\b" --include=*.java . 2>/dev/null
+
+          echo
+          echo "### Layout.java: does it expose getSceneOverlays() or similar? ###"
+          grep -n "SceneOverlay\|abstract.*View\|getViewport\|attachViews" \
+            chrome/browser/ui/android/layouts/java/src/org/chromium/chrome/browser/layouts/Layout.java
+
+      - name: Show a full candidate file for reference (first match found)
+        working-directory: chromium-src
+        run: |
+          set +e
+          f=$(grep -rl "extends Layout\b" --include=*.java . 2>/dev/null | head -1)
+          if [ -n "$f" ]; then
+            echo "### Full content of candidate: $f ###"
+            cat "$f"
+          else
+            echo "No surviving Layout subclass found in fetched dirs -- widen sparse-checkout"
+          fi
