@@ -854,15 +854,26 @@ def inject_strings(c):
     return None
 patch_file(grd_path, "strings injection", inject_strings)
 
-# --- Step C: Preference Arrays in arrays.xml or values.xml ---
+# --- Step C: Preference Arrays in Chrome's arrays.xml or values.xml ---
 target_res_xml = None
-for candidate in ["chrome/android/java/res/values/arrays.xml", "chrome/android/java/res/values/values.xml"]:
-    for f in glob.glob(f"**/{os.path.basename(candidate)}", recursive=True):
-        if "out" not in f and "res/values" in f:
-            target_res_xml = f
+# Look strictly in chrome/android/java/res/values to avoid third_party SDK files
+for candidate in [
+    "chrome/android/java/res/values/arrays.xml",
+    "chrome/android/java/res/values/values.xml",
+    "chrome/browser/ui/android/strings/values/arrays.xml"
+]:
+    # Check direct relative path or find strictly within chrome/
+    candidates = glob.glob(f"**/{os.path.basename(candidate)}", recursive=True)
+    for p in candidates:
+        if "out" not in p and "third_party" not in p and "chrome" in p and "res" in p and "values" in p:
+            target_res_xml = p
             break
     if target_res_xml:
         break
+
+if not target_res_xml:
+    print("[FATAL] Could not find Chrome arrays.xml or values.xml in chrome/android/java/res/values!")
+    sys.exit(1)
 
 def inject_arrays(c):
     if "aerium_tab_switcher_entries" in c:
