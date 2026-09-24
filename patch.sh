@@ -703,17 +703,21 @@ find . -name "AeriumBackupFragment.java" -exec sed -i 's/RESTART_SNACKBAR_DURATI
 # ==============================================================================
 echo "==> [26] Injecting True Classic 3D Overlapping Stack Tab Switcher with Settings..."
 
-python3 - << 'EOF'
-import os, sys, glob, re, subprocess
+# Wipe intermediate resources so AAPT2 gets fresh non-conflicting packages
+find . -path "*/obj/chrome/android/features/tab_ui/*resources*" -delete 2>/dev/null || true
+find . -path "*/obj/chrome/android/chrome_app_java_resources*" -delete 2>/dev/null || true
 
-def find_canonical_file(filename, path_hint=""):
+python3 - << 'EOF'
+import os, sys, glob, re
+
+def find_file(filename, path_hint=""):
     out_sub = f"{os.sep}out{os.sep}"
-    test_segments = [f"{os.sep}test{os.sep}", f"{os.sep}tests{os.sep}", f"{os.sep}javatests{os.sep}", f"{os.sep}junit{os.sep}", f"{os.sep}robolectric{os.sep}"]
+    tp_sub = f"{os.sep}third_party{os.sep}"
     candidates = glob.glob(f"**/{filename}", recursive=True)
     matches = [
         p for p in candidates
         if out_sub not in p and not p.startswith(f"out{os.sep}")
-        and not any(ts in p.lower() for ts in test_segments)
+        and tp_sub not in p and not p.startswith(f"third_party{os.sep}")
         and (not path_hint or path_hint in p)
     ]
     if not matches:
@@ -721,114 +725,31 @@ def find_canonical_file(filename, path_hint=""):
         sys.exit(1)
     return matches[0]
 
-# --- 1. HARD CLEAN OF TABLISTCOORDINATOR.JAVA ---
-coord_path = find_canonical_file("TabListCoordinator.java", path_hint=os.path.join("tasks", "tab_management"))
-
-# First attempt: git checkout using the file's directory
-try:
-    subprocess.run(["git", "checkout", "-f", "--", os.path.basename(coord_path)], cwd=os.path.dirname(coord_path), check=False)
-except Exception:
-    pass
-
-# Second attempt: manual sanitization if git checkout didn't reset it
+# --- 1. DIRECT SANITIZATION OF TABLISTCOORDINATOR.JAVA ---
+coord_path = find_file("TabListCoordinator.java", path_hint=os.path.join("tasks", "tab_management"))
 with open(coord_path, "r", encoding="utf-8") as f:
-    raw_coord = f.read()
+    c = f.read()
 
-# Erase any old/broken injected blocks completely
-if "classicCardHeightPx" in raw_coord or "ClassicStackLayoutManager" in raw_coord:
-    print("[aerium] Purging stale TabListCoordinator modifications from runner disk...")
-    # Revert setLayoutManager
-    raw_coord = re.sub(
-        r'if \(TabUiFeatureUtilities\.isVerticalStackSelected\(\)\)[\s\S]*?mRecyclerView\.setLayoutManager\(gridLayoutManager\);\s*\}',
-        'mRecyclerView.setLayoutManager(gridLayoutManager);',
-        raw_coord
-    )
-    # Revert setDefaultGridCardSize
-    raw_coord = re.sub(
-        r'if \(TabUiFeatureUtilities\.isVerticalStackSelected\(\)\)[\s\S]*?mMediator\.setDefaultGridCardSize\(newDefaultSize\);\s*\}',
-        'mMediator.setDefaultGridCardSize(newDefaultSize);',
-        raw_coord
-    )
-    # Revert layoutType
-    raw_coord = raw_coord.replace(
-        'int layoutType = (actionOnRelatedTabs && !TabUiFeatureUtilities.isTabGroupDisabledForVerticalStack()) ? TabListLayoutType.GROUPED : TabListLayoutType.FLAT;',
-        'int layoutType = actionOnRelatedTabs ? TabListLayoutType.GROUPED : TabListLayoutType.FLAT;'
-    )
+bad_snippet = "newDefaultSize = new Size(mRecyclerView.getWidth(), classicCardHeightPx);"
+if bad_snippet in c:
+    print("[aerium] Found and fixing bad newDefaultSize assignment in TabListCoordinator...")
+    good_snippet = """int rvWidth = mRecyclerView.getWidth();
+            int rvHeight = mRecyclerView.getHeight();
+            int classicWidth = (rvWidth > 0) ? rvWidth : newDefaultSize.getWidth();
+            int classicHeight = (rvHeight > 0) ? (int)(rvHeight * 0.70f) : (int)(classicWidth * 1.45f);
+            mMediator.setDefaultGridCardSize(new Size(classicWidth, classicHeight));
+            return;"""
+    c = c.replace(bad_snippet, good_snippet)
+    c = c.replace("mMediator.setDefaultGridCardSize(newDefaultSize);", "")
     with open(coord_path, "w", encoding="utf-8") as f:
-        f.write(raw_coord)
+        f.write(c)
 
-# Clean mediator as well
-med_path = find_canonical_file("TabListMediator.java", path_hint=os.path.join("tasks", "tab_management"))
-try:
-    subprocess.run(["git", "checkout", "-f", "--", os.path.basename(med_path)], cwd=os.path.dirname(med_path), check=False)
-except Exception:
-    pass
+# --- 2. Step B: Strings injection ---
+grd_path = find_file("android_chrome_strings.grd", path_hint=os.path.join("chrome", "browser", "ui", "android", "strings"))
+with open(grd_path, "r", encoding="utf-8") as f:
+    grd_c = f.read()
 
-with open(med_path, "r", encoding="utf-8") as f:
-    raw_med = f.read()
-if "isVerticalStackSelected" in raw_med:
-    raw_med = re.sub(r'int getSpanCount\(int screenWidthDp\) \{\s*if \(TabUiFeatureUtilities\.isVerticalStackSelected\(\)\) \{\s*return 1;\s*\}', 'int getSpanCount(int screenWidthDp) {', raw_med)
-    with open(med_path, "w", encoding="utf-8") as f:
-        f.write(raw_med)
-
-# Clean util as well
-util_path = find_canonical_file("TabUiFeatureUtilities.java", path_hint=os.path.join("tasks", "tab_management"))
-try:
-    subprocess.run(["git", "checkout", "-f", "--", os.path.basename(util_path)], cwd=os.path.dirname(util_path), check=False)
-except Exception:
-    pass
-
-print("[aerium] Source files successfully sanitized.")
-EOF
-
-python3 - << 'EOF'
-import os, sys, traceback, glob, re
-
-def find_canonical_file(filename, path_hint=""):
-    out_sub = f"{os.sep}out{os.sep}"
-    test_segments = [f"{os.sep}test{os.sep}", f"{os.sep}tests{os.sep}", f"{os.sep}javatests{os.sep}", f"{os.sep}junit{os.sep}", f"{os.sep}robolectric{os.sep}"]
-    candidates = glob.glob(f"**/{filename}", recursive=True)
-    matches = [
-        p for p in candidates
-        if out_sub not in p and not p.startswith(f"out{os.sep}")
-        and not any(ts in p.lower() for ts in test_segments)
-        and (not path_hint or path_hint in p)
-    ]
-    if not matches:
-        print(f"[FATAL] Target file not found: {filename} (hint: '{path_hint}')")
-        sys.exit(1)
-    if len(matches) > 1:
-        print(f"[FATAL] Ambiguous matches for {filename}: {matches}")
-        sys.exit(1)
-    return matches[0]
-
-def patch_file(p, desc, func):
-    if not os.path.exists(p):
-        print(f"[FATAL] Target file not found for {desc}: {p}")
-        sys.exit(1)
-    with open(p, "r", encoding="utf-8") as f:
-        content = f.read()
-    
-    res = func(content)
-    if res is None:
-        print(f"[FATAL] Patch failed to apply for {desc} in {p}")
-        sys.exit(1)
-        
-    new_content, already_patched = res
-    if already_patched:
-        print(f"[aerium] [ALREADY PATCHED] {desc} in {p}")
-        return True
-        
-    with open(p, "w", encoding="utf-8") as f:
-        f.write(new_content)
-    print(f"[aerium] [SUCCESS] {desc} in {p}")
-    return True
-
-# --- Step B: Inject Strings into android_chrome_strings.grd ---
-grd_path = find_canonical_file("android_chrome_strings.grd", path_hint=os.path.join("chrome", "browser", "ui", "android", "strings"))
-def inject_strings(c):
-    if "IDS_AERIUM_TAB_SWITCHER_LAYOUT_TITLE" in c:
-        return (c, True)
+if "IDS_AERIUM_TAB_SWITCHER_LAYOUT_TITLE" not in grd_c:
     new_strings = """
       <!-- Aerium Tab Switcher Layout Options -->
       <message name="IDS_AERIUM_TAB_SWITCHER_LAYOUT_TITLE" desc="Title for tab switcher layout preference.">
@@ -847,41 +768,38 @@ def inject_strings(c):
         Classic Vertical Stack (without tab groups)
       </message>
 """
-    m = re.search(r'<messages[^>]*>', c)
+    m = re.search(r'<messages[^>]*>', grd_c)
     if m:
         idx = m.end()
-        return (c[:idx] + new_strings + c[idx:], False)
-    return None
-patch_file(grd_path, "strings injection", inject_strings)
+        grd_c = grd_c[:idx] + new_strings + grd_c[idx:]
+        with open(grd_path, "w", encoding="utf-8") as f:
+            f.write(grd_c)
+        print("[aerium] Strings injected successfully into android_chrome_strings.grd")
 
-# --- Step C: Cleanly inject string-arrays into chrome/android/java/res/values ONLY ---
-python3 - << 'EOF'
-import os, glob, re
-
-# 1. Clean up duplicate arrays if present in features/tab_ui to satisfy AAPT2
-tab_ui_res_pattern = os.path.join("features", "tab_ui", "java", "res", "values")
+# --- 3. Step C: AAPT2 duplicate-safe array injection ---
+# Remove duplicate arrays from any other XML first
 for p in glob.glob("**/values.xml", recursive=True) + glob.glob("**/arrays.xml", recursive=True):
-    if tab_ui_res_pattern in p and "out" not in p:
-        try:
-            with open(p, "r", encoding="utf-8") as f:
-                content = f.read()
-            if "aerium_tab_switcher_entries" in content:
-                content = re.sub(r'<!-- Aerium Tab Switcher Preference Arrays -->[\s\S]*?</string-array>', '', content)
-                content = re.sub(r'<string-array name="aerium_tab_switcher_entries">[\s\S]*?</string-array>', '', content)
-                content = re.sub(r'<string-array name="aerium_tab_switcher_values">[\s\S]*?</string-array>', '', content)
-                with open(p, "w", encoding="utf-8") as f:
-                    f.write(content)
-                print(f"[aerium] Removed duplicate array definition from {p}")
-        except Exception as e:
-            print(f"[aerium] Notice cleaning {p}: {e}")
+    if "out" in p or "third_party" in p:
+        continue
+    try:
+        with open(p, "r", encoding="utf-8") as fp:
+            xml_c = fp.read()
+        if "aerium_tab_switcher_entries" in xml_c and "chrome/android/java/res/values" not in p:
+            xml_c = re.sub(r'<!-- Aerium Tab Switcher Preference Arrays -->[\s\S]*?</string-array>', '', xml_c)
+            xml_c = re.sub(r'<string-array name="aerium_tab_switcher_entries">[\s\S]*?</string-array>', '', xml_c)
+            xml_c = re.sub(r'<string-array name="aerium_tab_switcher_values">[\s\S]*?</string-array>', '', xml_c)
+            with open(p, "w", encoding="utf-8") as fp:
+                fp.write(xml_c)
+            print(f"[aerium] Removed duplicate arrays from {p}")
+    except Exception:
+        pass
 
-# 2. Inject it once into chrome/android/java/res/values/values.xml
+# Now inject ONCE into chrome/android/java/res/values/values.xml
 target_res_xml = None
 for candidate in glob.glob("**/chrome/android/java/res/values/values.xml", recursive=True):
     if "out" not in candidate and "third_party" not in candidate:
         target_res_xml = candidate
         break
-
 if not target_res_xml:
     for candidate in glob.glob("**/chrome/android/java/res/values/arrays.xml", recursive=True):
         if "out" not in candidate and "third_party" not in candidate:
@@ -890,8 +808,8 @@ if not target_res_xml:
 
 if target_res_xml:
     with open(target_res_xml, "r", encoding="utf-8") as f:
-        c = f.read()
-    if "aerium_tab_switcher_entries" not in c and "</resources>" in c:
+        res_c = f.read()
+    if "aerium_tab_switcher_entries" not in res_c and "</resources>" in res_c:
         arrays_snippet = """
     <!-- Aerium Tab Switcher Preference Arrays -->
     <string-array name="aerium_tab_switcher_entries">
@@ -905,19 +823,17 @@ if target_res_xml:
         <item>2</item>
     </string-array>
 """
-        c = c.replace("</resources>", arrays_snippet + "\n</resources>", 1)
+        res_c = res_c.replace("</resources>", arrays_snippet + "\n</resources>", 1)
         with open(target_res_xml, "w", encoding="utf-8") as f:
-            f.write(c)
+            f.write(res_c)
         print(f"[aerium] Arrays injected uniquely into {target_res_xml}")
-EOF
-find . -path "*/obj/chrome/android/features/tab_ui/*resources*" -delete 2>/dev/null || true
-find . -path "*/obj/chrome/android/chrome_app_java_resources*" -delete 2>/dev/null || true
 
-# --- Step D: Inject into tabs_settings.xml ---
-settings_path = find_canonical_file("tabs_settings.xml", path_hint=os.path.join("res", "xml"))
-def inject_pref(c):
-    if 'android:key="aerium_tab_switcher_mode"' in c:
-        return (c, True)
+# --- 4. Step D: Settings XML injection ---
+settings_path = find_file("tabs_settings.xml", path_hint=os.path.join("res", "xml"))
+with open(settings_path, "r", encoding="utf-8") as f:
+    set_c = f.read()
+
+if 'android:key="aerium_tab_switcher_mode"' not in set_c and "</PreferenceScreen>" in set_c:
     pref_item = """
     <org.chromium.components.browser_ui.settings.ChromeBaseListPreference
         android:key="aerium_tab_switcher_mode"
@@ -928,16 +844,17 @@ def inject_pref(c):
         android:defaultValue="0"
         app:useSimpleSummaryProvider="true" />
 """
-    if "</PreferenceScreen>" in c:
-        return (c.replace("</PreferenceScreen>", pref_item + "\n</PreferenceScreen>", 1), False)
-    return None
-patch_file(settings_path, "preference xml injection", inject_pref)
+    set_c = set_c.replace("</PreferenceScreen>", pref_item + "\n</PreferenceScreen>", 1)
+    with open(settings_path, "w", encoding="utf-8") as f:
+        f.write(set_c)
+    print("[aerium] Preference injected into tabs_settings.xml")
 
-# --- Step E: Patch TabUiFeatureUtilities.java ---
-util_path = find_canonical_file("TabUiFeatureUtilities.java", path_hint=os.path.join("tasks", "tab_management"))
-def patch_util(c):
-    if "getAeriumTabSwitcherMode" in c:
-        return (c, True)
+# --- 5. Step E: TabUiFeatureUtilities.java ---
+util_path = find_file("TabUiFeatureUtilities.java", path_hint=os.path.join("tasks", "tab_management"))
+with open(util_path, "r", encoding="utf-8") as f:
+    u_c = f.read()
+
+if "getAeriumTabSwitcherMode" not in u_c:
     methods = """
     public static final String AERIUM_TAB_SWITCHER_MODE_KEY = "aerium_tab_switcher_mode";
 
@@ -959,16 +876,15 @@ def patch_util(c):
         return getAeriumTabSwitcherMode() == 2;
     }
 """
-    idx = c.rfind("}")
+    idx = u_c.rfind("}")
     if idx != -1:
-        return (c[:idx] + "\n" + methods + "\n}\n", False)
-    return None
-patch_file(util_path, "TabUiFeatureUtilities helpers", patch_util)
+        u_c = u_c[:idx] + "\n" + methods + "\n}\n"
+        with open(util_path, "w", encoding="utf-8") as f:
+            f.write(u_c)
+        print("[aerium] TabUiFeatureUtilities patched")
 
-# --- Step F: Create ClassicStackLayoutManager.java ---
-coord_path = find_canonical_file("TabListCoordinator.java", path_hint=os.path.join("tasks", "tab_management"))
+# --- 6. Step F: ClassicStackLayoutManager.java ---
 stack_lm_path = os.path.join(os.path.dirname(coord_path), "ClassicStackLayoutManager.java")
-
 with open(stack_lm_path, "w", encoding="utf-8") as f:
     f.write("""// Copyright 2026 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
@@ -1051,50 +967,34 @@ public class ClassicStackLayoutManager extends LinearLayoutManager {
     }
 }
 """)
-print(f"[aerium] [SUCCESS] Created {stack_lm_path}")
+print(f"[aerium] Created {stack_lm_path}")
 
-# --- Register in tab_management_java_sources.gni ---
-gni_path = find_canonical_file("tab_management_java_sources.gni", path_hint=os.path.join("features", "tab_ui"))
-def patch_gni(c):
-    if "ClassicStackLayoutManager.java" in c:
-        return (c, True)
+# Register in tab_management_java_sources.gni
+gni_path = find_file("tab_management_java_sources.gni", path_hint=os.path.join("features", "tab_ui"))
+with open(gni_path, "r", encoding="utf-8") as f:
+    gni_c = f.read()
+if "ClassicStackLayoutManager.java" not in gni_c:
     pattern = r'("//[^"]*TabListCoordinator\.java",)'
     repl = r'\1\n  "//chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/ClassicStackLayoutManager.java",'
-    c, n = re.subn(pattern, repl, c, count=1)
-    if n != 1:
-        print("[FATAL] Could not find TabListCoordinator.java in tab_management_java_sources.gni!")
-        return None
-    return (c, False)
-patch_file(gni_path, "ClassicStackLayoutManager registration in tab_management_java_sources.gni", patch_gni)
+    gni_c = re.sub(pattern, repl, gni_c, count=1)
+    with open(gni_path, "w", encoding="utf-8") as f:
+        f.write(gni_c)
+    print("[aerium] Registered ClassicStackLayoutManager in tab_management_java_sources.gni")
 
-# --- Step G: Patch TabListCoordinator.java ---
-def patch_coord(c):
-    # If the broken newDefaultSize assignment exists on disk, surgically replace it
-    bad_line = "newDefaultSize = new Size(mRecyclerView.getWidth(), classicCardHeightPx);"
-    if bad_line in c:
-        print("[aerium] Surgically healing bad newDefaultSize assignment in TabListCoordinator...")
-        healed_call = """int rvWidth = mRecyclerView.getWidth();
-            int rvHeight = mRecyclerView.getHeight();
-            int classicWidth = (rvWidth > 0) ? rvWidth : newDefaultSize.getWidth();
-            int classicHeight = (rvHeight > 0) ? (int)(rvHeight * 0.70f) : (int)(classicWidth * 1.45f);
-            mMediator.setDefaultGridCardSize(new Size(classicWidth, classicHeight));
-            return;"""
-        c = c.replace(bad_line, healed_call)
-        return (c, False)
+# --- 7. Full TabListCoordinator Integration ---
+with open(coord_path, "r", encoding="utf-8") as f:
+    coord_c = f.read()
 
-    if "ClassicStackLayoutManager" in c and "newDefaultSize.getWidth()" in c:
-        return (c, True)
+# 1. layoutType
+if "isTabGroupDisabledForVerticalStack" not in coord_c:
+    pattern_layout = r'int\s+layoutType\s*=\s*actionOnRelatedTabs\s*\?\s*TabListLayoutType\.GROUPED\s*:\s*TabListLayoutType\.FLAT\s*;'
+    repl_layout = 'int layoutType = (actionOnRelatedTabs && !TabUiFeatureUtilities.isTabGroupDisabledForVerticalStack()) ? TabListLayoutType.GROUPED : TabListLayoutType.FLAT;'
+    coord_c = re.sub(pattern_layout, repl_layout, coord_c, count=1)
 
-    # 1. Disable UI grouping if Mode 2 is selected
-    if "isTabGroupDisabledForVerticalStack" not in c:
-        pattern_layout = r'int\s+layoutType\s*=\s*actionOnRelatedTabs\s*\?\s*TabListLayoutType\.GROUPED\s*:\s*TabListLayoutType\.FLAT\s*;'
-        repl_layout = 'int layoutType = (actionOnRelatedTabs && !TabUiFeatureUtilities.isTabGroupDisabledForVerticalStack()) ? TabListLayoutType.GROUPED : TabListLayoutType.FLAT;'
-        c, n1 = re.subn(pattern_layout, repl_layout, c, count=1)
-
-    # 2. Attach ClassicStackLayoutManager
-    if "ClassicStackLayoutManager stackManager" not in c:
-        pattern_rv = r'mRecyclerView\.setLayoutManager\(\s*gridLayoutManager\s*\);'
-        repl_rv = """if (TabUiFeatureUtilities.isVerticalStackSelected()) {
+# 2. setLayoutManager
+if "ClassicStackLayoutManager stackManager" not in coord_c:
+    pattern_rv = r'mRecyclerView\.setLayoutManager\(\s*gridLayoutManager\s*\);'
+    repl_rv = """if (TabUiFeatureUtilities.isVerticalStackSelected()) {
             ClassicStackLayoutManager stackManager = new ClassicStackLayoutManager(mRecyclerView.getContext());
             mRecyclerView.setLayoutManager(stackManager);
             mRecyclerView.setClipChildren(false);
@@ -1102,12 +1002,12 @@ def patch_coord(c):
         } else {
             mRecyclerView.setLayoutManager(gridLayoutManager);
         }"""
-        c, n2 = re.subn(pattern_rv, repl_rv, c, count=1)
+    coord_c = re.sub(pattern_rv, repl_rv, coord_c, count=1)
 
-    # 3. Exact Card Size (passes new Size directly to mMediator, zero final reassignment)
-    if "classicWidth" not in c:
-        pattern_size = r'mMediator\.setDefaultGridCardSize\(\s*newDefaultSize\s*\);'
-        repl_size = """if (TabUiFeatureUtilities.isVerticalStackSelected()) {
+# 3. setDefaultGridCardSize
+if "mMediator.setDefaultGridCardSize(new Size(classicWidth, classicHeight));" not in coord_c:
+    pattern_size = r'mMediator\.setDefaultGridCardSize\(\s*newDefaultSize\s*\);'
+    repl_size = """if (TabUiFeatureUtilities.isVerticalStackSelected()) {
             int rvWidth = mRecyclerView.getWidth();
             int rvHeight = mRecyclerView.getHeight();
             int classicWidth = (rvWidth > 0) ? rvWidth : newDefaultSize.getWidth();
@@ -1116,34 +1016,35 @@ def patch_coord(c):
         } else {
             mMediator.setDefaultGridCardSize(newDefaultSize);
         }"""
-        c, n3 = re.subn(pattern_size, repl_size, c, count=1)
+    coord_c = re.sub(pattern_size, repl_size, coord_c, count=1)
 
-    return (c, False)
+with open(coord_path, "w", encoding="utf-8") as f:
+    f.write(coord_c)
+print("[aerium] TabListCoordinator fully patched")
 
-patch_file(coord_path, "TabListCoordinator layout & manager setup", patch_coord) 
+# --- 8. TabListMediator.java ---
+med_path = find_file("TabListMediator.java", path_hint=os.path.join("tasks", "tab_management"))
+with open(med_path, "r", encoding="utf-8") as f:
+    med_c = f.read()
 
-# --- Step H: Patch TabListMediator.java ---
-mediator_path = find_canonical_file("TabListMediator.java", path_hint=os.path.join("tasks", "tab_management"))
-def patch_mediator(c):
-    if "isVerticalStackSelected" in c:
-        return (c, True)
+if "isVerticalStackSelected" not in med_c:
     pattern_span = r'int\s+getSpanCount\s*\(\s*int\s+screenWidthDp\s*\)\s*\{'
     repl_span = """int getSpanCount(int screenWidthDp) {
         if (TabUiFeatureUtilities.isVerticalStackSelected()) {
             return 1;
         }"""
-    c, n = re.subn(pattern_span, repl_span, c, count=1)
-    if n != 1:
-        print("[FATAL] SpanCount override failed in TabListMediator!")
-        return None
-    return (c, False)
-patch_file(mediator_path, "TabListMediator span count override", patch_mediator)
+    med_c = re.sub(pattern_span, repl_span, med_c, count=1)
+    with open(med_path, "w", encoding="utf-8") as f:
+        f.write(med_c)
+    print("[aerium] TabListMediator patched")
 
 EOF
 
 # Invalidate intermediate javac jars to force clean recompilation
 find . -path "*/obj/chrome/android/chrome_java/*" -name "*.jar" -delete 2>/dev/null || true
 find . -path "*/obj/chrome/android/features/tab_ui/*" -name "*.jar" -delete 2>/dev/null || true
+
+
 
 # ==============================================================================
 # [27] ENTERPRISE DEEP SCAN CALLS BYPASS
