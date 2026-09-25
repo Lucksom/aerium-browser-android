@@ -699,7 +699,7 @@ echo "==> Fixing RESTART_SNACKBAR_DURATION_MS in AeriumBackupFragment..."
 find . -name "AeriumBackupFragment.java" -exec sed -i 's/RESTART_SNACKBAR_DURATION_MS/6000/g' {} + 2>/dev/null || true
 
 # ==============================================================================
-# [26] AERIUM CLASSIC 3D OVERLAPPING STACK TAB SWITCHER (CHROMIUM 88 ENGINE)
+# [26] AERIUM CLASSIC 3D OVERLAPPING STACK TAB SWITCHER WITH SETTINGS
 # ==============================================================================
 echo "==> [26] Injecting True Classic 3D Overlapping Stack Tab Switcher with Settings..."
 
@@ -725,23 +725,19 @@ def find_file(filename, path_hint=""):
         sys.exit(1)
     return matches[0]
 
-# --- 1. CLEAN TABLISTCOORDINATOR.JAVA OF ANY PREVIOUS BROKEN SNIPPETS ---
+# --- 1. CLEAN TABLISTCOORDINATOR.JAVA OF ANY LEFTOVER BROKEN SNIPPETS ---
 coord_path = find_file("TabListCoordinator.java", path_hint=os.path.join("tasks", "tab_management"))
 with open(coord_path, "r", encoding="utf-8") as f:
     c = f.read()
 
-# Replace any occurrence of the bad newDefaultSize assignment
-if "classicCardHeightPx" in c:
-    print("[aerium] Stripping bad classicCardHeightPx snippet...")
-    c = c.replace("newDefaultSize = new Size(mRecyclerView.getWidth(), classicCardHeightPx);", "")
-
-# Ensure any early 'return;' after setDefaultGridCardSize is removed
+# Strip any previous broken snippets or early returns
+c = c.replace("newDefaultSize = new Size(mRecyclerView.getWidth(), classicCardHeightPx);", "")
 c = re.sub(r'int rvWidth = mRecyclerView[\s\S]*?return;\s*', '', c)
 
 with open(coord_path, "w", encoding="utf-8") as f:
     f.write(c)
 
-# --- 2. Step B: Strings injection ---
+# --- 2. Step B: Strings injection in android_chrome_strings.grd ---
 grd_path = find_file("android_chrome_strings.grd", path_hint=os.path.join("chrome", "browser", "ui", "android", "strings"))
 with open(grd_path, "r", encoding="utf-8") as f:
     grd_c = f.read()
@@ -774,7 +770,7 @@ if "IDS_AERIUM_TAB_SWITCHER_LAYOUT_TITLE" not in grd_c:
         print("[aerium] Strings injected successfully into android_chrome_strings.grd")
 
 # --- 3. Step C: AAPT2 duplicate-safe array injection ---
-# Remove duplicate arrays from any other XML first
+# Clean duplicate arrays from any other XML first
 for p in glob.glob("**/values.xml", recursive=True) + glob.glob("**/arrays.xml", recursive=True):
     if "out" in p or "third_party" in p:
         continue
@@ -787,7 +783,6 @@ for p in glob.glob("**/values.xml", recursive=True) + glob.glob("**/arrays.xml",
             xml_c = re.sub(r'<string-array name="aerium_tab_switcher_values">[\s\S]*?</string-array>', '', xml_c)
             with open(p, "w", encoding="utf-8") as fp:
                 fp.write(xml_c)
-            print(f"[aerium] Removed duplicate arrays from {p}")
     except Exception:
         pass
 
@@ -825,7 +820,7 @@ if target_res_xml:
             f.write(res_c)
         print(f"[aerium] Arrays injected uniquely into {target_res_xml}")
 
-# --- 4. Step D: Settings XML injection ---
+# --- 4. Step D: Settings XML injection (Tabs & Tab Groups preference) ---
 settings_path = find_file("tabs_settings.xml", path_hint=os.path.join("res", "xml"))
 with open(settings_path, "r", encoding="utf-8") as f:
     set_c = f.read()
@@ -846,7 +841,7 @@ if 'android:key="aerium_tab_switcher_mode"' not in set_c and "</PreferenceScreen
         f.write(set_c)
     print("[aerium] Preference injected into tabs_settings.xml")
 
-# --- 5. Step E: TabUiFeatureUtilities.java ---
+# --- 5. Step E: TabUiFeatureUtilities.java mode helper ---
 util_path = find_file("TabUiFeatureUtilities.java", path_hint=os.path.join("tasks", "tab_management"))
 with open(util_path, "r", encoding="utf-8") as f:
     u_c = f.read()
@@ -878,9 +873,9 @@ if "getAeriumTabSwitcherMode" not in u_c:
         u_c = u_c[:idx] + "\n" + methods + "\n}\n"
         with open(util_path, "w", encoding="utf-8") as f:
             f.write(u_c)
-        print("[aerium] TabUiFeatureUtilities patched")
+        print("[aerium] TabUiFeatureUtilities patched with layout mode helpers")
 
-# --- 6. Step F: ClassicStackLayoutManager.java ---
+# --- 6. Step F: ClassicStackLayoutManager.java (3D Overlapping Card Physics) ---
 stack_lm_path = os.path.join(os.path.dirname(coord_path), "ClassicStackLayoutManager.java")
 with open(stack_lm_path, "w", encoding="utf-8") as f:
     f.write("""// Copyright 2026 The Chromium Authors
@@ -978,7 +973,7 @@ if "ClassicStackLayoutManager.java" not in gni_c:
         f.write(gni_c)
     print("[aerium] Registered ClassicStackLayoutManager in tab_management_java_sources.gni")
 
-# --- 7. Full TabListCoordinator Integration ---
+# --- 7. TabListCoordinator Integration ---
 with open(coord_path, "r", encoding="utf-8") as f:
     coord_c = f.read()
 
@@ -1001,7 +996,7 @@ if "ClassicStackLayoutManager stackManager" not in coord_c:
         }"""
     coord_c = re.sub(pattern_rv, repl_rv, coord_c, count=1)
 
-# 3. setDefaultGridCardSize: pass Size directly WITHOUT return; so CompositorView is always populated
+# 3. setDefaultGridCardSize: Pass custom size WITHOUT return; so CompositorView is always populated
 if "classicWidth" not in coord_c:
     pattern_size = r'mMediator\.setDefaultGridCardSize\(\s*newDefaultSize\s*\);'
     repl_size = """if (TabUiFeatureUtilities.isVerticalStackSelected()) {
@@ -1018,7 +1013,7 @@ with open(coord_path, "w", encoding="utf-8") as f:
     f.write(coord_c)
 print("[aerium] TabListCoordinator fully patched")
 
-# --- 8. TabListMediator.java ---
+# --- 8. TabListMediator.java: 1 card per row in vertical stack mode ---
 med_path = find_file("TabListMediator.java", path_hint=os.path.join("tasks", "tab_management"))
 with open(med_path, "r", encoding="utf-8") as f:
     med_c = f.read()
@@ -1039,6 +1034,9 @@ EOF
 # Invalidate intermediate javac jars to force clean recompilation
 find . -path "*/obj/chrome/android/chrome_java/*" -name "*.jar" -delete 2>/dev/null || true
 find . -path "*/obj/chrome/android/features/tab_ui/*" -name "*.jar" -delete 2>/dev/null || true
+
+
+
 
 
  
