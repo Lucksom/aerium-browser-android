@@ -35,21 +35,28 @@ for entry in m88_entries:
 
 with open(gni_path, "w", encoding="utf-8") as f:
     f.write(gni_c)
-print("[aerium] Cleaned M88 entries from chrome_java_sources.gni")
 
-# --- 2. SURGICALLY HEAL & INTEGRATE TABLISTCOORDINATOR.JAVA ---
+# --- 2. RESTORE AND PATCH TABLISTCOORDINATOR.JAVA WITHOUT REGEX ---
 coord_path = find_file("TabListCoordinator.java", path_hint=os.path.join("tasks", "tab_management"))
 with open(coord_path, "r", encoding="utf-8") as f:
     c = f.read()
 
-# 2a. Directly remove the illegal final variable assignment that broke line 766
+# Balance check: if braces are missing, restore the closing brace!
+open_braces = c.count("{")
+close_braces = c.count("}")
+if open_braces > close_braces:
+    missing = open_braces - close_braces
+    print(f"[aerium] Detected {missing} missing closing brace(s) in TabListCoordinator. Restoring!")
+    c = c.rstrip() + ("\n}\n" * missing)
+
+# Clean out any old broken line literal (NO REGEX)
 bad_line = "newDefaultSize = new Size(mRecyclerView.getWidth(), classicCardHeightPx);"
 if bad_line in c:
-    print("[aerium] Removing illegal newDefaultSize assignment!")
     c = c.replace(bad_line, "")
 
-# 2b. Clean any old broken snippet or early return
-clean_replacement = """if (TabUiFeatureUtilities.isVerticalStackSelected()) {
+# Literal replacement for card size (NO REGEX)
+old_target = "mMediator.setDefaultGridCardSize(newDefaultSize);"
+clean_size_code = """if (TabUiFeatureUtilities.isVerticalStackSelected()) {
             int w = (newDefaultSize != null && newDefaultSize.getWidth() > 0) ? newDefaultSize.getWidth() : mRecyclerView.getWidth();
             if (w <= 0) w = 1080;
             int h = (mRecyclerView.getHeight() > 0) ? (int)(mRecyclerView.getHeight() * 0.70f) : (int)(w * 1.45f);
@@ -58,24 +65,12 @@ clean_replacement = """if (TabUiFeatureUtilities.isVerticalStackSelected()) {
             mMediator.setDefaultGridCardSize(newDefaultSize);
         }"""
 
-standard_call = "mMediator.setDefaultGridCardSize(newDefaultSize);"
+if "isVerticalStackSelected" not in c and old_target in c:
+    c = c.replace(old_target, clean_size_code, 1)
 
-if "isVerticalStackSelected" in c and "mMediator.setDefaultGridCardSize" in c:
-    pattern_existing = r'if \(TabUiFeatureUtilities\.isVerticalStackSelected\(\)\)[\s\S]*?mMediator\.setDefaultGridCardSize\(newDefaultSize\);\s*\}'
-    c = re.sub(pattern_existing, clean_replacement.strip(), c)
-elif standard_call in c:
-    c = c.replace(standard_call, clean_replacement, 1)
-
-# 2c. layoutType: Disable UI grouping if Mode 2 is selected
-if "isTabGroupDisabledForVerticalStack" not in c:
-    pattern_layout = r'int\s+layoutType\s*=\s*actionOnRelatedTabs\s*\?\s*TabListLayoutType\.GROUPED\s*:\s*TabListLayoutType\.FLAT\s*;'
-    repl_layout = 'int layoutType = (actionOnRelatedTabs && !TabUiFeatureUtilities.isTabGroupDisabledForVerticalStack()) ? TabListLayoutType.GROUPED : TabListLayoutType.FLAT;'
-    c = re.sub(pattern_layout, repl_layout, c, count=1)
-
-# 2d. setLayoutManager: Attach ClassicStackLayoutManager
-if "ClassicStackLayoutManager stackManager" not in c:
-    pattern_rv = r'mRecyclerView\.setLayoutManager\(\s*gridLayoutManager\s*\);'
-    repl_rv = """if (TabUiFeatureUtilities.isVerticalStackSelected()) {
+# Literal replacement for setLayoutManager (NO REGEX)
+old_lm = "mRecyclerView.setLayoutManager(gridLayoutManager);"
+clean_lm_code = """if (TabUiFeatureUtilities.isVerticalStackSelected()) {
             ClassicStackLayoutManager stackManager = new ClassicStackLayoutManager(mRecyclerView.getContext());
             mRecyclerView.setLayoutManager(stackManager);
             mRecyclerView.setClipChildren(false);
@@ -83,11 +78,21 @@ if "ClassicStackLayoutManager stackManager" not in c:
         } else {
             mRecyclerView.setLayoutManager(gridLayoutManager);
         }"""
-    c = re.sub(pattern_rv, repl_rv, c, count=1)
+
+if "ClassicStackLayoutManager stackManager" not in c and old_lm in c:
+    c = c.replace(old_lm, clean_lm_code, 1)
+
+# Final brace verification
+open_braces = c.count("{")
+close_braces = c.count("}")
+if open_braces != close_braces:
+    diff = open_braces - close_braces
+    if diff > 0:
+        c = c.rstrip() + ("\n}\n" * diff)
 
 with open(coord_path, "w", encoding="utf-8") as f:
     f.write(c)
-print("[aerium] TabListCoordinator.java cleanly integrated.")
+print(f"[aerium] TabListCoordinator saved with balanced braces ({open_braces} open, {c.count('}')} close).")
 
 # --- 3. Step B: Strings injection in android_chrome_strings.grd ---
 grd_path = find_file("android_chrome_strings.grd", path_hint=os.path.join("chrome", "browser", "ui", "android", "strings"))
