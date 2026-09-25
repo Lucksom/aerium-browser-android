@@ -1,4 +1,4 @@
-name: Inspect TabListCoordinator
+name: Inspect ScrollDirection and GN target for Layout files
 
 on:
   workflow_dispatch:
@@ -15,7 +15,6 @@ jobs:
         run: |
           VERSION=$(grep -m1 -o '[0-9]\+\(\.[0-9]\+\)\{3\}' vanadium/args.gn)
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
-          echo "Resolved Chromium version: $VERSION"
 
       - name: Partial clone (tree metadata only)
         run: |
@@ -23,40 +22,49 @@ jobs:
             --branch "$VERSION" \
             https://chromium.googlesource.com/chromium/src.git chromium-src
 
-      - name: Locate the real TabListCoordinator.java path
+      - name: Structurally search for ScrollDirection everywhere
         working-directory: chromium-src
         run: |
           set +e
           git ls-tree -r --name-only "$VERSION" > /tmp/all_paths.txt
-          echo "### All matches for TabListCoordinator.java ###"
-          grep -E "TabListCoordinator\.java$" /tmp/all_paths.txt
 
-      - name: Fetch the real file and grep the exact lines this patch depends on
+          echo "### Any file literally named ScrollDirection.java? ###"
+          grep -iE "scrolldirection\.java$" /tmp/all_paths.txt
+
+          echo
+          echo "### Any Java file that DEFINES an interface/enum called ScrollDirection ###"
+          grep -E "\.java$" /tmp/all_paths.txt | while read -r f; do
+            hit=$(git show "$VERSION:$f" 2>/dev/null | grep -c "interface ScrollDirection\|enum ScrollDirection")
+            if [ "$hit" -gt 0 ]; then
+              echo "DEFINED IN: $f"
+              git show "$VERSION:$f" 2>/dev/null | grep -n -B2 -A8 "interface ScrollDirection\|enum ScrollDirection"
+            fi
+          done
+
+          echo
+          echo "### Every file that still IMPORTS some ScrollDirection (any package) ###"
+          grep -E "\.java$" /tmp/all_paths.txt | while read -r f; do
+            hit=$(git show "$VERSION:$f" 2>/dev/null | grep -c "import.*ScrollDirection;")
+            if [ "$hit" -gt 0 ]; then
+              git show "$VERSION:$f" 2>/dev/null | grep -n "import.*ScrollDirection;" | sed "s|^|$f: |"
+            fi
+          done
+
+      - name: Find the GN target that lists Layout.java as a source, and its deps
         working-directory: chromium-src
         run: |
           set +e
-          f=$(grep -E "TabListCoordinator\.java$" /tmp/all_paths.txt | head -1)
-          echo "Using: $f"
-          git show "$VERSION:$f" > /tmp/TabListCoordinator.java 2>/dev/null
+          echo "### Every BUILD.gn under compositor/layouts that mentions Layout.java ###"
+          grep -E "compositor/layouts.*BUILD\.gn$|compositor/layouts.*\.gni$" /tmp/all_paths.txt
 
-          echo
-          echo "### setDefaultGridCardSize call sites (with context) ###"
-          grep -n -B3 -A1 "setDefaultGridCardSize" /tmp/TabListCoordinator.java
-
-          echo
-          echo "### setLayoutManager call sites (with context) ###"
-          grep -n -B3 -A1 "setLayoutManager" /tmp/TabListCoordinator.java
-
-          echo
-          echo "### layoutType / TabListLayoutType.GROUPED logic ###"
-          grep -n -B2 -A2 "TabListLayoutType.GROUPED\|TabListLayoutType.FLAT" /tmp/TabListCoordinator.java
-
-          echo
-          echo "### GridLayoutManager references ###"
-          grep -n "GridLayoutManager" /tmp/TabListCoordinator.java
-
-      - name: Show full file content
-        working-directory: chromium-src
-        run: |
-          echo "===== FULL TabListCoordinator.java ====="
-          cat /tmp/TabListCoordinator.java
+          for f in $(grep -E "chrome/android.*\.gni$|chrome/android/BUILD\.gn$" /tmp/all_paths.txt); do
+            content=$(git show "$VERSION:$f" 2>/dev/null)
+            if echo "$content" | grep -q "compositor/layouts/phone/Layout.java\|LayoutManagerChromePhone.java"; then
+              echo "===== FOUND SOURCES LIST IN: $f ====="
+              echo "$content" | grep -n -B2 -A2 "compositor/layouts/phone/Layout.java\|LayoutManagerChromePhone.java"
+              echo
+              echo "### deps block in this same file (does it already reference supplier_java?) ###"
+              echo "$content" | grep -n -A3 "deps = \[\|deps += \[" | head -60
+              echo "$content" | grep -n "supplier_java\|base:supplier"
+            fi
+          done
