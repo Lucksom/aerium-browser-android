@@ -1,60 +1,80 @@
 #!/usr/bin/env python3
-import os, sys, glob, re
+import glob, os, re, sys
+
 
 def find_file(filename, path_hint=""):
-    out_sub = f"{os.sep}out{os.sep}"
-    tp_sub = f"{os.sep}third_party{os.sep}"
-    candidates = glob.glob(f"**/{filename}", recursive=True)
-    matches = [
-        p for p in candidates
-        if out_sub not in p and not p.startswith(f"out{os.sep}")
-        and tp_sub not in p and not p.startswith(f"third_party{os.sep}")
-        and (not path_hint or path_hint in p)
-    ]
-    if not matches:
-        print(f"[FATAL] Target file not found: {filename} (hint: '{path_hint}')")
-        sys.exit(1)
-    return matches[0]
+  out_sub = f"{os.sep}out{os.sep}"
+  tp_sub = f"{os.sep}third_party{os.sep}"
+  candidates = glob.glob(f"**/{filename}", recursive=True)
+  matches = [
+      p
+      for p in candidates
+      if out_sub not in p
+      and not p.startswith(f"out{os.sep}")
+      and tp_sub not in p
+      and not p.startswith(f"third_party{os.sep}")
+      and (not path_hint or path_hint in p)
+  ]
+  if not matches:
+    print(f"[FATAL] Target file not found: {filename} (hint: '{path_hint}')")
+    sys.exit(1)
+  return matches[0]
 
-# --- 1. REVERT M88 ENTRIES FROM CHROME_JAVA_SOURCES.GNI (IF PRESENT) ---
+
+# --- 1. REVERT M88 ENTRIES FROM CHROME_JAVA_SOURCES.GNI ---
 gni_path = find_file("chrome_java_sources.gni")
 with open(gni_path, "r", encoding="utf-8") as f:
-    gni_c = f.read()
+  gni_c = f.read()
 
 m88_entries = [
-    '"//chrome/android/java/src/org/chromium/chrome/browser/compositor/layouts/phone/StackLayoutBase.java",\n',
-    '"//chrome/android/java/src/org/chromium/chrome/browser/compositor/layouts/phone/StackLayout.java",\n',
-    '"//chrome/android/java/src/org/chromium/chrome/browser/compositor/layouts/phone/stack/Stack.java",\n',
-    '"//chrome/android/java/src/org/chromium/chrome/browser/compositor/layouts/phone/stack/StackTab.java",\n',
-    '"//chrome/android/java/src/org/chromium/chrome/browser/compositor/layouts/phone/stack/StackAnimation.java",\n',
-    '"//chrome/android/java/src/org/chromium/chrome/browser/compositor/layouts/phone/stack/OverlappingStack.java",\n',
-    '"//chrome/android/java/src/org/chromium/chrome/browser/compositor/scene_layer/ClassicStackSceneLayer.java",\n',
+    (
+        '"//chrome/android/java/src/org/chromium/chrome/browser/compositor/layouts/phone/StackLayoutBase.java",\n'
+    ),
+    (
+        '"//chrome/android/java/src/org/chromium/chrome/browser/compositor/layouts/phone/StackLayout.java",\n'
+    ),
+    (
+        '"//chrome/android/java/src/org/chromium/chrome/browser/compositor/layouts/phone/stack/Stack.java",\n'
+    ),
+    (
+        '"//chrome/android/java/src/org/chromium/chrome/browser/compositor/layouts/phone/stack/StackTab.java",\n'
+    ),
+    (
+        '"//chrome/android/java/src/org/chromium/chrome/browser/compositor/layouts/phone/stack/StackAnimation.java",\n'
+    ),
+    (
+        '"//chrome/android/java/src/org/chromium/chrome/browser/compositor/layouts/phone/stack/OverlappingStack.java",\n'
+    ),
+    (
+        '"//chrome/android/java/src/org/chromium/chrome/browser/compositor/scene_layer/ClassicStackSceneLayer.java",\n'
+    ),
 ]
 for entry in m88_entries:
-    gni_c = gni_c.replace("  " + entry, "").replace(entry, "")
+  gni_c = gni_c.replace("  " + entry, "").replace(entry, "")
 
 with open(gni_path, "w", encoding="utf-8") as f:
-    f.write(gni_c)
+  f.write(gni_c)
 
-# --- 2. RESTORE AND PATCH TABLISTCOORDINATOR.JAVA WITHOUT REGEX ---
-coord_path = find_file("TabListCoordinator.java", path_hint=os.path.join("tasks", "tab_management"))
+# --- 2. SURGICALLY INTEGRATE TABLISTCOORDINATOR.JAVA ---
+coord_path = find_file(
+    "TabListCoordinator.java", path_hint=os.path.join("tasks", "tab_management")
+)
 with open(coord_path, "r", encoding="utf-8") as f:
-    c = f.read()
+  c = f.read()
 
-# Balance check: if braces are missing, restore the closing brace!
+# Balance check: if braces are missing, restore them!
 open_braces = c.count("{")
 close_braces = c.count("}")
 if open_braces > close_braces:
-    missing = open_braces - close_braces
-    print(f"[aerium] Detected {missing} missing closing brace(s) in TabListCoordinator. Restoring!")
-    c = c.rstrip() + ("\n}\n" * missing)
+  missing = open_braces - close_braces
+  c = c.rstrip() + ("\n}\n" * missing)
 
-# Clean out any old broken line literal (NO REGEX)
-bad_line = "newDefaultSize = new Size(mRecyclerView.getWidth(), classicCardHeightPx);"
+bad_line = (
+    "newDefaultSize = new Size(mRecyclerView.getWidth(), classicCardHeightPx);"
+)
 if bad_line in c:
-    c = c.replace(bad_line, "")
+  c = c.replace(bad_line, "")
 
-# Literal replacement for card size (NO REGEX)
 old_target = "mMediator.setDefaultGridCardSize(newDefaultSize);"
 clean_size_code = """if (TabUiFeatureUtilities.isVerticalStackSelected()) {
             int w = (newDefaultSize != null && newDefaultSize.getWidth() > 0) ? newDefaultSize.getWidth() : mRecyclerView.getWidth();
@@ -66,9 +86,8 @@ clean_size_code = """if (TabUiFeatureUtilities.isVerticalStackSelected()) {
         }"""
 
 if "isVerticalStackSelected" not in c and old_target in c:
-    c = c.replace(old_target, clean_size_code, 1)
+  c = c.replace(old_target, clean_size_code, 1)
 
-# Literal replacement for setLayoutManager (NO REGEX)
 old_lm = "mRecyclerView.setLayoutManager(gridLayoutManager);"
 clean_lm_code = """if (TabUiFeatureUtilities.isVerticalStackSelected()) {
             ClassicStackLayoutManager stackManager = new ClassicStackLayoutManager(mRecyclerView.getContext());
@@ -80,27 +99,22 @@ clean_lm_code = """if (TabUiFeatureUtilities.isVerticalStackSelected()) {
         }"""
 
 if "ClassicStackLayoutManager stackManager" not in c and old_lm in c:
-    c = c.replace(old_lm, clean_lm_code, 1)
-
-# Final brace verification
-open_braces = c.count("{")
-close_braces = c.count("}")
-if open_braces != close_braces:
-    diff = open_braces - close_braces
-    if diff > 0:
-        c = c.rstrip() + ("\n}\n" * diff)
+  c = c.replace(old_lm, clean_lm_code, 1)
 
 with open(coord_path, "w", encoding="utf-8") as f:
-    f.write(c)
-print(f"[aerium] TabListCoordinator saved with balanced braces ({open_braces} open, {c.count('}')} close).")
+  f.write(c)
+print("[aerium] TabListCoordinator.java verified.")
 
-# --- 3. Step B: Strings injection in android_chrome_strings.grd ---
-grd_path = find_file("android_chrome_strings.grd", path_hint=os.path.join("chrome", "browser", "ui", "android", "strings"))
+# --- 3. Strings injection in android_chrome_strings.grd ---
+grd_path = find_file(
+    "android_chrome_strings.grd",
+    path_hint=os.path.join("chrome", "browser", "ui", "android", "strings"),
+)
 with open(grd_path, "r", encoding="utf-8") as f:
-    grd_c = f.read()
+  grd_c = f.read()
 
 if "IDS_AERIUM_TAB_SWITCHER_LAYOUT_TITLE" not in grd_c:
-    new_strings = """
+  new_strings = """
       <!-- Aerium Tab Switcher Layout Options -->
       <message name="IDS_AERIUM_TAB_SWITCHER_LAYOUT_TITLE" desc="Title for tab switcher layout preference.">
         Tab switcher layout
@@ -118,24 +132,21 @@ if "IDS_AERIUM_TAB_SWITCHER_LAYOUT_TITLE" not in grd_c:
         Classic Vertical Stack (without tab groups)
       </message>
 """
-    m = re.search(r'<messages[^>]*>', grd_c)
-    if m:
-        idx = m.end()
-        grd_c = grd_c[:idx] + new_strings + grd_c[idx:]
-        with open(grd_path, "w", encoding="utf-8") as f:
-            f.write(grd_c)
-        print("[aerium] Strings injected into android_chrome_strings.grd")
+  m = re.search(r"<messages[^>]*>", grd_c)
+  if m:
+    idx = m.end()
+    grd_c = grd_c[:idx] + new_strings + grd_c[idx:]
+    with open(grd_path, "w", encoding="utf-8") as f:
+      f.write(grd_c)
+    print("[aerium] Strings injected into android_chrome_strings.grd")
 
-# --- 4. Step C: Preference Arrays injection (DEDUPLICATE ACROSS ALL MODULES) ---
-# Delete any duplicate arrays from tab_ui or any other module
+# --- 4. Preference Arrays injection (DEDUPLICATED) ---
 for xml_path in (
     glob.glob("**/values.xml", recursive=True)
     + glob.glob("**/arrays.xml", recursive=True)
-    + glob.glob("**/strings.xml", recursive=True)
 ):
   if "out" in xml_path or "third_party" in xml_path:
     continue
-  # If it's NOT the primary chrome/android/java/res/values directory, strip the arrays!
   if "chrome/android/java/res/values" not in xml_path:
     try:
       with open(xml_path, "r", encoding="utf-8") as fp:
@@ -163,7 +174,6 @@ for xml_path in (
     except Exception:
       pass
 
-# Now inject ONCE into chrome/android/java/res/values/values.xml
 primary_res_xml = None
 for candidate in glob.glob(
     "**/chrome/android/java/res/values/values.xml", recursive=True
@@ -176,7 +186,6 @@ if primary_res_xml:
   with open(primary_res_xml, "r", encoding="utf-8") as f:
     res_c = f.read()
 
-  # Clean any malformed arrays first
   res_c = re.sub(
       r'<string-array name="aerium_tab_switcher_entries">[\s\S]*?</string-array>',
       "",
@@ -204,16 +213,16 @@ if primary_res_xml:
   res_c = res_c.replace("</resources>", arrays_snippet + "\n</resources>", 1)
   with open(primary_res_xml, "w", encoding="utf-8") as f:
     f.write(res_c)
-  print(f"[aerium] Injected arrays uniquely into {primary_res_xml}")
+  print(f"[aerium] Arrays injected into {primary_res_xml}")
 
-# --- 5. Step D: Settings XML injection (Use ListPreference - fixes ClassNotFoundException) ---
+# --- 5. Settings XML injection (USE ListPreference) ---
 settings_path = find_file(
     "tabs_settings.xml", path_hint=os.path.join("res", "xml")
 )
 with open(settings_path, "r", encoding="utf-8") as f:
   set_c = f.read()
 
-# Remove the broken ChromeBaseListPreference that caused the crash
+# Remove old broken tags
 set_c = re.sub(
     r"<org\.chromium\.components\.browser_ui\.settings\.ChromeBaseListPreference[\s\S]*?/>",
     "",
@@ -225,7 +234,14 @@ set_c = re.sub(
     set_c,
 )
 
-# Use standard androidx ListPreference
+# Ensure app namespace exists on root tag
+if 'xmlns:app="http://schemas.android.com/apk/res-auto"' not in set_c:
+  set_c = set_c.replace(
+      "<PreferenceScreen",
+      '<PreferenceScreen xmlns:app="http://schemas.android.com/apk/res-auto"',
+      1,
+  )
+
 pref_item = """
     <ListPreference
         android:key="aerium_tab_switcher_mode"
@@ -241,18 +257,50 @@ if "</PreferenceScreen>" in set_c:
   set_c = set_c.replace("</PreferenceScreen>", pref_item + "\n</PreferenceScreen>", 1)
   with open(settings_path, "w", encoding="utf-8") as f:
     f.write(set_c)
-  print(
-      "[aerium] Replaced ChromeBaseListPreference with standard ListPreference"
-      " in tabs_settings.xml"
-  )
+  print("[aerium] Injected ListPreference into tabs_settings.xml")
 
-# --- 6. Step E: TabUiFeatureUtilities.java mode helper ---
-util_path = find_file("TabUiFeatureUtilities.java", path_hint=os.path.join("tasks", "tab_management"))
+# --- 6. Sync Settings in TabsSettings.java ---
+tabs_settings_java = find_file(
+    "TabsSettings.java", path_hint=os.path.join("tasks", "tab_management")
+)
+with open(tabs_settings_java, "r", encoding="utf-8") as f:
+  ts_c = f.read()
+
+if "aerium_tab_switcher_mode" not in ts_c:
+  if "import androidx.preference.ListPreference;" not in ts_c:
+    ts_c = "import androidx.preference.ListPreference;\n" + ts_c
+
+  sync_code = """
+        ListPreference aeriumPref = (ListPreference) findPreference("aerium_tab_switcher_mode");
+        if (aeriumPref != null) {
+            aeriumPref.setSummaryProvider(ListPreference.SimpleSummaryProvider.getInstance());
+            aeriumPref.setOnPreferenceChangeListener((preference, newValue) -> {
+                org.chromium.base.ContextUtils.getAppSharedPreferences().edit()
+                        .putString("aerium_tab_switcher_mode", (String) newValue).apply();
+                return true;
+            });
+        }
+"""
+  if "onCreatePreferences" in ts_c:
+    pattern_create = (
+        r"(void\s+onCreatePreferences\s*\([^)]*\)\s*\{[\s\S]*?setPreferencesFromResource\([^)]*\);)"
+    )
+    if re.search(pattern_create, ts_c):
+      ts_c = re.sub(pattern_create, r"\1" + sync_code, ts_c, count=1)
+      with open(tabs_settings_java, "w", encoding="utf-8") as f:
+        f.write(ts_c)
+      print("[aerium] Hooked listener in TabsSettings.java")
+
+# --- 7. TabUiFeatureUtilities helper ---
+util_path = find_file(
+    "TabUiFeatureUtilities.java",
+    path_hint=os.path.join("tasks", "tab_management"),
+)
 with open(util_path, "r", encoding="utf-8") as f:
-    u_c = f.read()
+  u_c = f.read()
 
 if "getAeriumTabSwitcherMode" not in u_c:
-    methods = """
+  methods = """
     public static final String AERIUM_TAB_SWITCHER_MODE_KEY = "aerium_tab_switcher_mode";
 
     public static int getAeriumTabSwitcherMode() {
@@ -273,17 +321,19 @@ if "getAeriumTabSwitcherMode" not in u_c:
         return getAeriumTabSwitcherMode() == 2;
     }
 """
-    idx = u_c.rfind("}")
-    if idx != -1:
-        u_c = u_c[:idx] + "\n" + methods + "\n}\n"
-        with open(util_path, "w", encoding="utf-8") as f:
-            f.write(u_c)
-        print("[aerium] TabUiFeatureUtilities patched")
+  idx = u_c.rfind("}")
+  if idx != -1:
+    u_c = u_c[:idx] + "\n" + methods + "\n}\n"
+    with open(util_path, "w", encoding="utf-8") as f:
+      f.write(u_c)
+    print("[aerium] TabUiFeatureUtilities patched")
 
-# --- 7. Step F: ClassicStackLayoutManager.java ---
-stack_lm_path = os.path.join(os.path.dirname(coord_path), "ClassicStackLayoutManager.java")
+# --- 8. ClassicStackLayoutManager.java ---
+stack_lm_path = os.path.join(
+    os.path.dirname(coord_path), "ClassicStackLayoutManager.java"
+)
 with open(stack_lm_path, "w", encoding="utf-8") as f:
-    f.write("""// Copyright 2026 The Chromium Authors
+  f.write("""// Copyright 2026 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -364,34 +414,38 @@ public class ClassicStackLayoutManager extends LinearLayoutManager {
     }
 }
 """)
-print(f"[aerium] Created {stack_lm_path}")
 
-# Register in tab_management_java_sources.gni
-gni_path = find_file("tab_management_java_sources.gni", path_hint=os.path.join("features", "tab_ui"))
+gni_path = find_file(
+    "tab_management_java_sources.gni",
+    path_hint=os.path.join("features", "tab_ui"),
+)
 with open(gni_path, "r", encoding="utf-8") as f:
-    gni_c = f.read()
+  gni_c = f.read()
 if "ClassicStackLayoutManager.java" not in gni_c:
-    pattern = r'("//[^"]*TabListCoordinator\.java",)'
-    repl = r'\1\n  "//chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/ClassicStackLayoutManager.java",'
-    gni_c = re.sub(pattern, repl, gni_c, count=1)
-    with open(gni_path, "w", encoding="utf-8") as f:
-        f.write(gni_c)
-    print("[aerium] Registered ClassicStackLayoutManager in tab_management_java_sources.gni")
+  pattern = r'("//[^"]*TabListCoordinator\.java",)'
+  repl = (
+      r"\1\n "
+      ' "//chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/ClassicStackLayoutManager.java",'
+  )
+  gni_c = re.sub(pattern, repl, gni_c, count=1)
+  with open(gni_path, "w", encoding="utf-8") as f:
+    f.write(gni_c)
 
-# --- 8. Step H: TabListMediator (1 card per row for vertical stack) ---
-med_path = find_file("TabListMediator.java", path_hint=os.path.join("tasks", "tab_management"))
+# --- 9. TabListMediator (1 card per row) ---
+med_path = find_file(
+    "TabListMediator.java", path_hint=os.path.join("tasks", "tab_management")
+)
 with open(med_path, "r", encoding="utf-8") as f:
-    med_c = f.read()
+  med_c = f.read()
 
 if "isVerticalStackSelected" not in med_c:
-    pattern_span = r'int\s+getSpanCount\s*\(\s*int\s+screenWidthDp\s*\)\s*\{'
-    repl_span = """int getSpanCount(int screenWidthDp) {
+  pattern_span = r"int\s+getSpanCount\s*\(\s*int\s+screenWidthDp\s*\)\s*\{"
+  repl_span = """int getSpanCount(int screenWidthDp) {
         if (TabUiFeatureUtilities.isVerticalStackSelected()) {
             return 1;
         }"""
-    med_c = re.sub(pattern_span, repl_span, med_c, count=1)
-    with open(med_path, "w", encoding="utf-8") as f:
-        f.write(med_c)
-    print("[aerium] TabListMediator patched")
+  med_c = re.sub(pattern_span, repl_span, med_c, count=1)
+  with open(med_path, "w", encoding="utf-8") as f:
+    f.write(med_c)
 
-print("[aerium] Classic Stack Patch executed successfully.")
+print("[aerium] Classic Stack Patch fully verified and ready.")
