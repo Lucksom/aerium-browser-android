@@ -725,26 +725,21 @@ def find_file(filename, path_hint=""):
         sys.exit(1)
     return matches[0]
 
-# --- 1. DIRECT SANITIZATION OF TABLISTCOORDINATOR.JAVA ---
-coord_path = find_file(
-    "TabListCoordinator.java", path_hint=os.path.join("tasks", "tab_management")
-)
+# --- 1. CLEAN TABLISTCOORDINATOR.JAVA OF ANY PREVIOUS BROKEN SNIPPETS ---
+coord_path = find_file("TabListCoordinator.java", path_hint=os.path.join("tasks", "tab_management"))
 with open(coord_path, "r", encoding="utf-8") as f:
-  c = f.read()
-
-# Revert TabListCoordinator.java back to pristine git/upstream state using git checkout if available
-try:
-  import subprocess
-
-  subprocess.run(
-      ["git", "checkout", "-f", "--", os.path.basename(coord_path)],
-      cwd=os.path.dirname(coord_path),
-      check=False,
-  )
-  with open(coord_path, "r", encoding="utf-8") as f:
     c = f.read()
-except Exception:
-  pass
+
+# Replace any occurrence of the bad newDefaultSize assignment
+if "classicCardHeightPx" in c:
+    print("[aerium] Stripping bad classicCardHeightPx snippet...")
+    c = c.replace("newDefaultSize = new Size(mRecyclerView.getWidth(), classicCardHeightPx);", "")
+
+# Ensure any early 'return;' after setDefaultGridCardSize is removed
+c = re.sub(r'int rvWidth = mRecyclerView[\s\S]*?return;\s*', '', c)
+
+with open(coord_path, "w", encoding="utf-8") as f:
+    f.write(c)
 
 # --- 2. Step B: Strings injection ---
 grd_path = find_file("android_chrome_strings.grd", path_hint=os.path.join("chrome", "browser", "ui", "android", "strings"))
@@ -985,24 +980,18 @@ if "ClassicStackLayoutManager.java" not in gni_c:
 
 # --- 7. Full TabListCoordinator Integration ---
 with open(coord_path, "r", encoding="utf-8") as f:
-  coord_c = f.read()
+    coord_c = f.read()
 
-# 1. layoutType: Disable UI grouping if Mode 2 is selected
+# 1. layoutType
 if "isTabGroupDisabledForVerticalStack" not in coord_c:
-  pattern_layout = (
-      r"int\s+layoutType\s*=\s*actionOnRelatedTabs\s*\?\s*TabListLayoutType\.GROUPED\s*:\s*TabListLayoutType\.FLAT\s*;"
-  )
-  repl_layout = (
-      "int layoutType = (actionOnRelatedTabs &&"
-      " !TabUiFeatureUtilities.isTabGroupDisabledForVerticalStack()) ?"
-      " TabListLayoutType.GROUPED : TabListLayoutType.FLAT;"
-  )
-  coord_c = re.sub(pattern_layout, repl_layout, coord_c, count=1)
+    pattern_layout = r'int\s+layoutType\s*=\s*actionOnRelatedTabs\s*\?\s*TabListLayoutType\.GROUPED\s*:\s*TabListLayoutType\.FLAT\s*;'
+    repl_layout = 'int layoutType = (actionOnRelatedTabs && !TabUiFeatureUtilities.isTabGroupDisabledForVerticalStack()) ? TabListLayoutType.GROUPED : TabListLayoutType.FLAT;'
+    coord_c = re.sub(pattern_layout, repl_layout, coord_c, count=1)
 
-# 2. setLayoutManager: Attach ClassicStackLayoutManager & disable clipping
+# 2. setLayoutManager
 if "ClassicStackLayoutManager stackManager" not in coord_c:
-  pattern_rv = r"mRecyclerView\.setLayoutManager\(\s*gridLayoutManager\s*\);"
-  repl_rv = """if (TabUiFeatureUtilities.isVerticalStackSelected()) {
+    pattern_rv = r'mRecyclerView\.setLayoutManager\(\s*gridLayoutManager\s*\);'
+    repl_rv = """if (TabUiFeatureUtilities.isVerticalStackSelected()) {
             ClassicStackLayoutManager stackManager = new ClassicStackLayoutManager(mRecyclerView.getContext());
             mRecyclerView.setLayoutManager(stackManager);
             mRecyclerView.setClipChildren(false);
@@ -1010,12 +999,12 @@ if "ClassicStackLayoutManager stackManager" not in coord_c:
         } else {
             mRecyclerView.setLayoutManager(gridLayoutManager);
         }"""
-  coord_c = re.sub(pattern_rv, repl_rv, coord_c, count=1)
+    coord_c = re.sub(pattern_rv, repl_rv, coord_c, count=1)
 
-# 3. setDefaultGridCardSize: Pass custom size WITHOUT return; preserving all braces
-if "isVerticalStackSelected" not in coord_c:
-  pattern_size = r"mMediator\.setDefaultGridCardSize\(\s*newDefaultSize\s*\);"
-  repl_size = """if (TabUiFeatureUtilities.isVerticalStackSelected()) {
+# 3. setDefaultGridCardSize: pass Size directly WITHOUT return; so CompositorView is always populated
+if "classicWidth" not in coord_c:
+    pattern_size = r'mMediator\.setDefaultGridCardSize\(\s*newDefaultSize\s*\);'
+    repl_size = """if (TabUiFeatureUtilities.isVerticalStackSelected()) {
             int w = (newDefaultSize != null && newDefaultSize.getWidth() > 0) ? newDefaultSize.getWidth() : mRecyclerView.getWidth();
             if (w <= 0) w = 1080;
             int h = (mRecyclerView.getHeight() > 0) ? (int)(mRecyclerView.getHeight() * 0.70f) : (int)(w * 1.45f);
@@ -1023,12 +1012,11 @@ if "isVerticalStackSelected" not in coord_c:
         } else {
             mMediator.setDefaultGridCardSize(newDefaultSize);
         }"""
-  coord_c = re.sub(pattern_size, repl_size, coord_c, count=1)
+    coord_c = re.sub(pattern_size, repl_size, coord_c, count=1)
 
 with open(coord_path, "w", encoding="utf-8") as f:
-  f.write(coord_c)
-print("[aerium] TabListCoordinator successfully patched.")
-
+    f.write(coord_c)
+print("[aerium] TabListCoordinator fully patched")
 
 # --- 8. TabListMediator.java ---
 med_path = find_file("TabListMediator.java", path_hint=os.path.join("tasks", "tab_management"))
@@ -1053,6 +1041,9 @@ find . -path "*/obj/chrome/android/chrome_java/*" -name "*.jar" -delete 2>/dev/n
 find . -path "*/obj/chrome/android/features/tab_ui/*" -name "*.jar" -delete 2>/dev/null || true
 
 
+ 
+
+    
 
 # ==============================================================================
 # [27] ENTERPRISE DEEP SCAN CALLS BYPASS
