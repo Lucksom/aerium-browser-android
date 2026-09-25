@@ -206,14 +206,28 @@ if primary_res_xml:
     f.write(res_c)
   print(f"[aerium] Injected arrays uniquely into {primary_res_xml}")
 
-# --- 5. Step D: Settings XML injection (Tabs & Tab Groups) ---
-settings_path = find_file("tabs_settings.xml", path_hint=os.path.join("res", "xml"))
+# --- 5. Step D: Settings XML injection (Use ListPreference - fixes ClassNotFoundException) ---
+settings_path = find_file(
+    "tabs_settings.xml", path_hint=os.path.join("res", "xml")
+)
 with open(settings_path, "r", encoding="utf-8") as f:
-    set_c = f.read()
+  set_c = f.read()
 
-if 'android:key="aerium_tab_switcher_mode"' not in set_c and "</PreferenceScreen>" in set_c:
-    pref_item = """
-    <org.chromium.components.browser_ui.settings.ChromeBaseListPreference
+# Remove the broken ChromeBaseListPreference that caused the crash
+set_c = re.sub(
+    r"<org\.chromium\.components\.browser_ui\.settings\.ChromeBaseListPreference[\s\S]*?/>",
+    "",
+    set_c,
+)
+set_c = re.sub(
+    r'<ListPreference[^>]*android:key="aerium_tab_switcher_mode"[\s\S]*?/>',
+    "",
+    set_c,
+)
+
+# Use standard androidx ListPreference
+pref_item = """
+    <ListPreference
         android:key="aerium_tab_switcher_mode"
         android:title="@string/aerium_tab_switcher_layout_title"
         android:summary="@string/aerium_tab_switcher_layout_summary"
@@ -222,10 +236,15 @@ if 'android:key="aerium_tab_switcher_mode"' not in set_c and "</PreferenceScreen
         android:defaultValue="0"
         app:useSimpleSummaryProvider="true" />
 """
-    set_c = set_c.replace("</PreferenceScreen>", pref_item + "\n</PreferenceScreen>", 1)
-    with open(settings_path, "w", encoding="utf-8") as f:
-        f.write(set_c)
-    print("[aerium] Preference injected into tabs_settings.xml")
+
+if "</PreferenceScreen>" in set_c:
+  set_c = set_c.replace("</PreferenceScreen>", pref_item + "\n</PreferenceScreen>", 1)
+  with open(settings_path, "w", encoding="utf-8") as f:
+    f.write(set_c)
+  print(
+      "[aerium] Replaced ChromeBaseListPreference with standard ListPreference"
+      " in tabs_settings.xml"
+  )
 
 # --- 6. Step E: TabUiFeatureUtilities.java mode helper ---
 util_path = find_file("TabUiFeatureUtilities.java", path_hint=os.path.join("tasks", "tab_management"))
