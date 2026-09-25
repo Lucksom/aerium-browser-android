@@ -710,10 +710,31 @@ echo "==> [26] Wiring patches/classic_stack into LayoutManagerChromePhone & Sett
 find . -path "*/obj/chrome/android/features/tab_ui/*resources*" -delete 2>/dev/null || true
 find . -path "*/obj/chrome/android/chrome_app_java_resources*" -delete 2>/dev/null || true
 
-# 1. Copy the uploaded files from patches/classic_stack/ into the Chromium source tree
-PATCHES_DIR="$(pwd)/patches/classic_stack"
-if [ ! -d "$PATCHES_DIR" ]; then
-    PATCHES_DIR=$(find . -maxdepth 4 -type d -name "classic_stack" | head -n 1)
+# 1. Locate patches/classic_stack reliably across repository and Chromium tree
+PATCHES_DIR=""
+for candidate in \
+    "$GITHUB_WORKSPACE/patches/classic_stack" \
+    "$(pwd)/patches/classic_stack" \
+    "$(pwd)/../patches/classic_stack" \
+    "$(pwd)/../../patches/classic_stack" \
+    "$(pwd)/../../../patches/classic_stack" \
+    "$(dirname "$(realpath "$0" 2>/dev/null || echo "$0")")/patches/classic_stack"; do
+    if [ -d "$candidate" ]; then
+        PATCHES_DIR="$candidate"
+        break
+    fi
+done
+
+if [ -z "$PATCHES_DIR" ] || [ ! -d "$PATCHES_DIR" ]; then
+    # Deep search across runner workspace if not in standard relative paths
+    PATCHES_DIR=$(find /home/runner/work/ -maxdepth 5 -type d -name "classic_stack" 2>/dev/null | head -n 1)
+fi
+
+echo "[aerium] Resolved PATCHES_DIR at: $PATCHES_DIR"
+
+if [ -z "$PATCHES_DIR" ] || [ ! -d "$PATCHES_DIR" ]; then
+    echo "[FATAL] patches/classic_stack directory still not found!"
+    exit 1
 fi
 
 TARGET_PHONE="chrome/android/java/src/org/chromium/chrome/browser/compositor/layouts/phone"
