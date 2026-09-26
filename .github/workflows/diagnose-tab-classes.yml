@@ -1,120 +1,32 @@
-name: Fetch All M88 Stack and Layer Files
-
-on:
-  workflow_dispatch:
-
-jobs:
-  fetch_all_stack:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Create Target Directories
+      - name: Fetch and inspect LayoutManagerChromePhone in M153
+        working-directory: chromium-src
         run: |
-          mkdir -p m88_full_bundle/java_stack
-          mkdir -p m88_full_bundle/java_layouts
-          mkdir -p m88_full_bundle/java_scene_layer
-          mkdir -p m88_full_bundle/native_scene_layer
-          mkdir -p m88_full_bundle/modern_comparisons
+          set +e
+          # 1. Add layout manager directories to sparse checkout
+          git sparse-checkout add \
+            chrome/android/java/src/org/chromium/chrome/browser/compositor/layouts \
+            chrome/android/java/src/org/chromium/chrome/browser/hub \
+            ui/android/java/src/org/chromium/ui/interpolators \
+            components/browser_ui/widget/android/java/src/org/chromium/components/browser_ui/widget/animation
+          git checkout "$VERSION"
 
-      - name: 1. Fetch Complete M88 Stack Java Files
-        run: |
-          M88_TAG="88.0.4324.93"
-          M88_RAW="https://chromium.googlesource.com/chromium/src/+/refs/tags/${M88_TAG}"
+          echo "=========================================================="
+          echo "### 1. Locate Interpolators in M153 ###"
+          find . -name "Interpolators.java" 2>/dev/null
 
-          echo "=== Fetching verified stack files ==="
-          STACK_FILES=(
-            "Stack.java"
-            "StackTab.java"
-            "StackScroller.java"
-            "StackViewAnimation.java"
-            "StackAnimation.java"
-            "OverlappingStack.java"
-            "NonOverlappingStack.java"
-          )
+          echo
+          echo "=========================================================="
+          echo "### 2. Inspect Tab Switcher Layout Creation in LayoutManagerChromePhone ###"
+          LM="chrome/android/java/src/org/chromium/chrome/browser/compositor/layouts/LayoutManagerChromePhone.java"
+          if [ -f "$LM" ]; then
+            echo "--- Matching layout initialization lines ---"
+            grep -n -C 5 "createLayout\|TabSwitcherLayout\|HubLayout\|startShowing" "$LM"
 
-          for f in "${STACK_FILES[@]}"; do
-            echo "Fetching $f..."
-            curl -s -f "${M88_RAW}/chrome/android/java/src/org/chromium/chrome/browser/compositor/layouts/phone/stack/${f}?format=TEXT" | base64 -d > "m88_full_bundle/java_stack/${f}" 2>/dev/null || true
-            if [ -s "m88_full_bundle/java_stack/${f}" ]; then
-              echo "  [OK] $f downloaded successfully ($(wc -l < m88_full_bundle/java_stack/${f}) lines)"
-            fi
-          done
-
-      - name: 2. Fetch M88 Layouts (StackLayout, StackLayoutBase)
-        run: |
-          M88_TAG="88.0.4324.93"
-          M88_RAW="https://chromium.googlesource.com/chromium/src/+/refs/tags/${M88_TAG}"
-
-          echo "=== Fetching StackLayout and StackLayoutBase ==="
-          LAYOUT_FILES=(
-            "StackLayout.java"
-            "StackLayoutBase.java"
-          )
-
-          for f in "${LAYOUT_FILES[@]}"; do
-            echo "Fetching $f..."
-            curl -s -f "${M88_RAW}/chrome/android/java/src/org/chromium/chrome/browser/compositor/layouts/phone/${f}?format=TEXT" | base64 -d > "m88_full_bundle/java_layouts/${f}" 2>/dev/null || true
-            if [ -s "m88_full_bundle/java_layouts/${f}" ]; then
-              echo "  [OK] $f downloaded successfully ($(wc -l < m88_full_bundle/java_layouts/${f}) lines)"
-            fi
-          done
-
-      - name: 3. Fetch M88 TabListSceneLayer (Java + C++ Native GPU Engine)
-        run: |
-          M88_TAG="88.0.4324.93"
-          M88_RAW="https://chromium.googlesource.com/chromium/src/+/refs/tags/${M88_TAG}"
-
-          echo "=== Fetching TabListSceneLayer Java ==="
-          curl -s -f "${M88_RAW}/chrome/android/java/src/org/chromium/chrome/browser/compositor/scene_layer/TabListSceneLayer.java?format=TEXT" | base64 -d > "m88_full_bundle/java_scene_layer/TabListSceneLayer.java" 2>/dev/null || true
-          if [ -s "m88_full_bundle/java_scene_layer/TabListSceneLayer.java" ]; then
-            echo "  [OK] TabListSceneLayer.java downloaded ($(wc -l < m88_full_bundle/java_scene_layer/TabListSceneLayer.java) lines)"
-          fi
-
-          echo "=== Fetching Native C++ TabListSceneLayer header and implementation ==="
-          curl -s -f "${M88_RAW}/chrome/browser/android/compositor/scene_layer/tab_list_scene_layer.h?format=TEXT" | base64 -d > "m88_full_bundle/native_scene_layer/tab_list_scene_layer.h" 2>/dev/null || true
-          curl -s -f "${M88_RAW}/chrome/browser/android/compositor/scene_layer/tab_list_scene_layer.cc?format=TEXT" | base64 -d > "m88_full_bundle/native_scene_layer/tab_list_scene_layer.cc" 2>/dev/null || true
-
-          if [ -s "m88_full_bundle/native_scene_layer/tab_list_scene_layer.h" ]; then
-            echo "  [OK] tab_list_scene_layer.h downloaded ($(wc -l < m88_full_bundle/native_scene_layer/tab_list_scene_layer.h) lines)"
-          fi
-          if [ -s "m88_full_bundle/native_scene_layer/tab_list_scene_layer.cc" ]; then
-            echo "  [OK] tab_list_scene_layer.cc downloaded ($(wc -l < m88_full_bundle/native_scene_layer/tab_list_scene_layer.cc) lines)"
-          fi
-
-      - name: 4. Fetch EventFilter & Gesture Files
-        run: |
-          M88_TAG="88.0.4324.93"
-          M88_RAW="https://chromium.googlesource.com/chromium/src/+/refs/tags/${M88_TAG}"
-
-          echo "=== Fetching M88 EventFilter and ScrollDirection ==="
-          curl -s -f "${M88_RAW}/chrome/android/java/src/org/chromium/chrome/browser/compositor/layouts/eventfilter/EventFilter.java?format=TEXT" | base64 -d > "m88_full_bundle/java_layouts/EventFilter.java" 2>/dev/null || true
-          curl -s -f "${M88_RAW}/chrome/android/java/src/org/chromium/chrome/browser/compositor/layouts/eventfilter/ScrollDirection.java?format=TEXT" | base64 -d > "m88_full_bundle/java_layouts/ScrollDirection.java" 2>/dev/null || true
-
-          if [ -s "m88_full_bundle/java_layouts/ScrollDirection.java" ]; then
-            echo "  [OK] ScrollDirection.java found in M88!"
+            echo
+            echo "--- Full Content of LayoutManagerChromePhone.java ---"
+            cat "$LM"
           else
-            echo "  [NOTE] ScrollDirection was defined inside EventFilter.java or EdgeSwipeHandler in M88"
+            echo "[ERROR] $LM not found, searching tree:"
+            find . -name "LayoutManagerChromePhone.java"
           fi
-
-      - name: 5. Fetch Modern 153.0 Counterparts for Comparison
-        run: |
-          VERSION=$(grep -m1 -o '[0-9]\+\(\.[0-9]\+\)\{3\}' vanadium/args.gn 2>/dev/null || echo "153.0.8010.36")
-          RAW_153="https://chromium.googlesource.com/chromium/src/+/refs/tags/${VERSION}"
-
-          echo "=== Fetching modern 153.0 counterparts ==="
-          curl -s -f "${RAW_153}/chrome/android/java/src/org/chromium/chrome/browser/compositor/overlays/strip/StackScroller.java?format=TEXT" | base64 -d > "m88_full_bundle/modern_comparisons/StackScroller_153.java" 2>/dev/null || true
-          curl -s -f "${RAW_153}/components/browser_ui/widget/android/java/src/org/chromium/components/browser_ui/widget/gesture/SwipeGestureListener.java?format=TEXT" | base64 -d > "m88_full_bundle/modern_comparisons/SwipeGestureListener_153.java" 2>/dev/null || true
-
-      - name: 6. Audit & Print Inventory
-        run: |
           echo "=========================================================="
-          echo "=== COMPLETE INVENTORY AUDIT OF DOWNLOADED FILES ==="
-          echo "=========================================================="
-          find m88_full_bundle -type f -exec ls -lh {} +
-
-      - name: 7. Upload Full Bundle as Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: complete-m88-stack-and-scene-layer-bundle
-          path: m88_full_bundle/
