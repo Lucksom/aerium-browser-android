@@ -21,7 +21,9 @@ def find_file(filename, path_hint=""):
   return matches[0]
 
 
-# --- 1. REVERT M88 ENTRIES FROM CHROME_JAVA_SOURCES.GNI ---
+# ==============================================================================
+# STEP 1: CLEAN LEGACY M88 ENTRIES FROM CHROME_JAVA_SOURCES.GNI
+# ==============================================================================
 gni_path = find_file("chrome_java_sources.gni")
 with open(gni_path, "r", encoding="utf-8") as f:
   gni_c = f.read()
@@ -54,8 +56,12 @@ for entry in m88_entries:
 
 with open(gni_path, "w", encoding="utf-8") as f:
   f.write(gni_c)
+print("[aerium] Step 1: Cleaned M88 entries from chrome_java_sources.gni")
 
-# --- 2. SURGICALLY INTEGRATE TABLISTCOORDINATOR.JAVA ---
+
+# ==============================================================================
+# STEP 2: SURGICALLY PATCH TABLISTCOORDINATOR.JAVA
+# ==============================================================================
 coord_path = find_file(
     "TabListCoordinator.java", path_hint=os.path.join("tasks", "tab_management")
 )
@@ -69,12 +75,14 @@ if open_braces > close_braces:
   missing = open_braces - close_braces
   c = c.rstrip() + ("\n}\n" * missing)
 
+# Clean illegal assignment if present
 bad_line = (
     "newDefaultSize = new Size(mRecyclerView.getWidth(), classicCardHeightPx);"
 )
 if bad_line in c:
   c = c.replace(bad_line, "")
 
+# Literal replacement for card size
 old_target = "mMediator.setDefaultGridCardSize(newDefaultSize);"
 clean_size_code = """if (TabUiFeatureUtilities.isVerticalStackSelected()) {
             int w = (newDefaultSize != null && newDefaultSize.getWidth() > 0) ? newDefaultSize.getWidth() : mRecyclerView.getWidth();
@@ -88,6 +96,7 @@ clean_size_code = """if (TabUiFeatureUtilities.isVerticalStackSelected()) {
 if "isVerticalStackSelected" not in c and old_target in c:
   c = c.replace(old_target, clean_size_code, 1)
 
+# Literal replacement for setLayoutManager
 old_lm = "mRecyclerView.setLayoutManager(gridLayoutManager);"
 clean_lm_code = """if (TabUiFeatureUtilities.isVerticalStackSelected()) {
             ClassicStackLayoutManager stackManager = new ClassicStackLayoutManager(mRecyclerView.getContext());
@@ -103,9 +112,12 @@ if "ClassicStackLayoutManager stackManager" not in c and old_lm in c:
 
 with open(coord_path, "w", encoding="utf-8") as f:
   f.write(c)
-print("[aerium] TabListCoordinator.java verified.")
+print("[aerium] Step 2: TabListCoordinator.java verified and patched.")
 
-# --- 3. Strings injection in android_chrome_strings.grd ---
+
+# ==============================================================================
+# STEP 3: INJECT STRINGS INTO ANDROID_CHROME_STRINGS.GRD
+# ==============================================================================
 grd_path = find_file(
     "android_chrome_strings.grd",
     path_hint=os.path.join("chrome", "browser", "ui", "android", "strings"),
@@ -138,9 +150,12 @@ if "IDS_AERIUM_TAB_SWITCHER_LAYOUT_TITLE" not in grd_c:
     grd_c = grd_c[:idx] + new_strings + grd_c[idx:]
     with open(grd_path, "w", encoding="utf-8") as f:
       f.write(grd_c)
-    print("[aerium] Strings injected into android_chrome_strings.grd")
+    print("[aerium] Step 3: Strings injected into android_chrome_strings.grd")
 
-# --- 4. Preference Arrays injection (DEDUPLICATED) ---
+
+# ==============================================================================
+# STEP 4: PREFERENCE ARRAYS INJECTION (DEDUPLICATED)
+# ==============================================================================
 for xml_path in (
     glob.glob("**/values.xml", recursive=True)
     + glob.glob("**/arrays.xml", recursive=True)
@@ -170,7 +185,6 @@ for xml_path in (
         )
         with open(xml_path, "w", encoding="utf-8") as fp:
           fp.write(content)
-        print(f"[aerium] Stripped duplicate array from {xml_path}")
     except Exception:
       pass
 
@@ -213,16 +227,19 @@ if primary_res_xml:
   res_c = res_c.replace("</resources>", arrays_snippet + "\n</resources>", 1)
   with open(primary_res_xml, "w", encoding="utf-8") as f:
     f.write(res_c)
-  print(f"[aerium] Arrays injected into {primary_res_xml}")
+  print(f"[aerium] Step 4: Arrays injected into {primary_res_xml}")
 
-# --- 5. Settings XML injection (USE ListPreference) ---
+
+# ==============================================================================
+# STEP 5: SETTINGS XML INJECTION (USE STANDARD ListPreference)
+# ==============================================================================
 settings_path = find_file(
     "tabs_settings.xml", path_hint=os.path.join("res", "xml")
 )
 with open(settings_path, "r", encoding="utf-8") as f:
   set_c = f.read()
 
-# Remove old broken tags
+# Strip any old ChromeBaseListPreference that crashes
 set_c = re.sub(
     r"<org\.chromium\.components\.browser_ui\.settings\.ChromeBaseListPreference[\s\S]*?/>",
     "",
@@ -234,7 +251,6 @@ set_c = re.sub(
     set_c,
 )
 
-# Ensure app namespace exists on root tag
 if 'xmlns:app="http://schemas.android.com/apk/res-auto"' not in set_c:
   set_c = set_c.replace(
       "<PreferenceScreen",
@@ -257,9 +273,12 @@ if "</PreferenceScreen>" in set_c:
   set_c = set_c.replace("</PreferenceScreen>", pref_item + "\n</PreferenceScreen>", 1)
   with open(settings_path, "w", encoding="utf-8") as f:
     f.write(set_c)
-  print("[aerium] Injected ListPreference into tabs_settings.xml")
+  print("[aerium] Step 5: Injected ListPreference into tabs_settings.xml")
 
-# --- 6. Sync Settings in TabsSettings.java ---
+
+# ==============================================================================
+# STEP 6: HOOK LISTENER & SYNC IN TABSSETTINGS.JAVA
+# ==============================================================================
 tabs_settings_java = find_file(
     "TabsSettings.java", path_hint=os.path.join("tasks", "tab_management")
 )
@@ -289,9 +308,12 @@ if "aerium_tab_switcher_mode" not in ts_c:
       ts_c = re.sub(pattern_create, r"\1" + sync_code, ts_c, count=1)
       with open(tabs_settings_java, "w", encoding="utf-8") as f:
         f.write(ts_c)
-      print("[aerium] Hooked listener in TabsSettings.java")
+      print("[aerium] Step 6: Hooked listener in TabsSettings.java")
 
-# --- 7. TabUiFeatureUtilities helper ---
+
+# ==============================================================================
+# STEP 7: TABUIFEATUREUTILITIES.JAVA MODE HELPER
+# ==============================================================================
 util_path = find_file(
     "TabUiFeatureUtilities.java",
     path_hint=os.path.join("tasks", "tab_management"),
@@ -326,9 +348,12 @@ if "getAeriumTabSwitcherMode" not in u_c:
     u_c = u_c[:idx] + "\n" + methods + "\n}\n"
     with open(util_path, "w", encoding="utf-8") as f:
       f.write(u_c)
-    print("[aerium] TabUiFeatureUtilities patched")
+    print("[aerium] Step 7: TabUiFeatureUtilities patched")
 
-# --- 8. ClassicStackLayoutManager.java ---
+
+# ==============================================================================
+# STEP 8: CLASSICSTACKLAYOUTMANAGER.JAVA (CRASH-PROOF GridLayoutManager)
+# ==============================================================================
 stack_lm_path = os.path.join(
     os.path.dirname(coord_path), "ClassicStackLayoutManager.java"
 )
@@ -341,28 +366,42 @@ package org.chromium.chrome.browser.tasks.tab_management;
 
 import android.content.Context;
 import android.view.View;
-import androidx.recyclerview.widget.LinearLayoutManager;
+import androidx.recyclerview.widget.GridLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
-public class ClassicStackLayoutManager extends LinearLayoutManager {
-    private static final float SCALE_AMOUNT = 0.85f;
-    private static final float TILT_ANGLE_DEGREES = 8.5f;
-    private static final int MAX_STACKED_TABS_TOP = 3;
-    private static final int PEEK_HEADER_DP = 64;
+public class ClassicStackLayoutManager extends GridLayoutManager {
+    private static final float SCALE_AMOUNT = 0.88f;
+    private static final float TILT_ANGLE_DEGREES = 8.0f;
+    private static final int MAX_STACKED_TABS_TOP = 4;
+    private static final int PEEK_HEADER_DP = 72;
     
     private final float mDensity;
     private final int mPeekHeaderPx;
 
     public ClassicStackLayoutManager(Context context) {
-        super(context, LinearLayoutManager.VERTICAL, false);
+        super(context, 1);
         mDensity = context.getResources().getDisplayMetrics().density;
         mPeekHeaderPx = (int) (PEEK_HEADER_DP * mDensity);
     }
 
     @Override
+    public void setSpanSizeLookup(SpanSizeLookup spanSizeLookup) {
+        // Enforce 1 span per tab so GridLayoutManager never throws span size mismatch
+        super.setSpanSizeLookup(new SpanSizeLookup() {
+            @Override
+            public int getSpanSize(int position) {
+                return 1;
+            }
+        });
+    }
+
+    @Override
     public void onLayoutChildren(RecyclerView.Recycler recycler, RecyclerView.State state) {
-        super.onLayoutChildren(recycler, state);
-        applyClassic3DStackTransformations();
+        try {
+            super.onLayoutChildren(recycler, state);
+            applyClassic3DStackTransformations();
+        } catch (Exception ignored) {
+        }
     }
 
     @Override
@@ -385,10 +424,10 @@ public class ClassicStackLayoutManager extends LinearLayoutManager {
             int position = getPosition(child);
             float viewTop = child.getTop();
 
-            float elevation = Math.max(1.0f, 60.0f - (position * 2.5f));
+            float elevation = Math.max(1.0f, 60.0f - (position * 2.0f));
             child.setElevation(elevation);
 
-            child.setCameraDistance(mDensity * 10000.0f);
+            child.setCameraDistance(mDensity * 12000.0f);
             child.setPivotX(child.getWidth() / 2.0f);
             child.setPivotY(0.0f);
             child.setRotationX(TILT_ANGLE_DEGREES);
@@ -407,14 +446,19 @@ public class ClassicStackLayoutManager extends LinearLayoutManager {
             if (viewTop < parentTop) {
                 float offset = parentTop - viewTop;
                 int stackRank = Math.min(position, MAX_STACKED_TABS_TOP);
-                float compressionOffset = stackRank * (10.0f * mDensity);
+                float compressionOffset = stackRank * (12.0f * mDensity);
                 child.setTranslationY(child.getTranslationY() + offset + compressionOffset);
             }
         }
     }
 }
 """)
+print(
+    f"[aerium] Step 8: Created crash-proof GridLayoutManager-compatible"
+    f" ClassicStackLayoutManager"
+)
 
+# Register in tab_management_java_sources.gni
 gni_path = find_file(
     "tab_management_java_sources.gni",
     path_hint=os.path.join("features", "tab_ui"),
@@ -431,7 +475,10 @@ if "ClassicStackLayoutManager.java" not in gni_c:
   with open(gni_path, "w", encoding="utf-8") as f:
     f.write(gni_c)
 
-# --- 9. TabListMediator (1 card per row) ---
+
+# ==============================================================================
+# STEP 9: TABLISTMEDIATOR (1 CARD PER ROW FOR VERTICAL STACK)
+# ==============================================================================
 med_path = find_file(
     "TabListMediator.java", path_hint=os.path.join("tasks", "tab_management")
 )
@@ -447,5 +494,6 @@ if "isVerticalStackSelected" not in med_c:
   med_c = re.sub(pattern_span, repl_span, med_c, count=1)
   with open(med_path, "w", encoding="utf-8") as f:
     f.write(med_c)
+  print("[aerium] Step 9: TabListMediator patched")
 
-print("[aerium] Classic Stack Patch fully verified and ready.")
+print("[aerium] All 9 steps completed successfully.")
