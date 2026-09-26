@@ -79,12 +79,20 @@ if not patch_dir:
 print(f"[aerium] Resolved patch_dir: {patch_dir}")
 
 # ==============================================================================
+# ==============================================================================
 # STEP 1: RESTORE MISSING STACK PROPERTIES IN LayoutTab.java
 # ==============================================================================
 lt_path = find_file("LayoutTab.java", path_hint=os.path.join("compositor", "layouts", "components"))
+with open(lt_path, "r", encoding="utf-8") as f:
+    lt_c = f.read()
 
-keys_anchor = "public static final WritableFloatPropertyKey BORDER_ALPHA = new WritableFloatPropertyKey();"
-keys_replacement = """public static final WritableFloatPropertyKey BORDER_ALPHA = new WritableFloatPropertyKey();
+# 1. Inject missing PropertyKeys
+if "TILT_X_IN_DEGREES = new WritableFloatPropertyKey();" not in lt_c:
+    keys_anchor = "public static final WritableFloatPropertyKey BORDER_ALPHA = new WritableFloatPropertyKey();"
+    if keys_anchor not in lt_c:
+        print(f"[FATAL] Keys anchor '{keys_anchor}' not found in {lt_path}")
+        sys.exit(1)
+    keys_replacement = """public static final WritableFloatPropertyKey BORDER_ALPHA = new WritableFloatPropertyKey();
     public static final WritableFloatPropertyKey TILT_X_IN_DEGREES = new WritableFloatPropertyKey();
     public static final WritableFloatPropertyKey TILT_Y_IN_DEGREES = new WritableFloatPropertyKey();
     public static final WritableFloatPropertyKey SIDE_BORDER_SCALE = new WritableFloatPropertyKey();
@@ -98,10 +106,14 @@ keys_replacement = """public static final WritableFloatPropertyKey BORDER_ALPHA 
     public static final org.chromium.ui.modelutil.PropertyModel.WritableObjectPropertyKey<android.graphics.RectF> CLOSE_PLACEMENT =
             new org.chromium.ui.modelutil.PropertyModel.WritableObjectPropertyKey<>();
     public static final float CLOSE_BUTTON_WIDTH_DP = 36.0f;"""
-patch_file(lt_path, keys_anchor, keys_replacement, "LayoutTab.java missing PropertyKeys")
+    lt_c = lt_c.replace(keys_anchor, keys_replacement, 1)
+    print("[aerium] Injected PropertyKey definitions into LayoutTab.java")
+else:
+    print("[aerium] Already patched: LayoutTab.java missing PropertyKeys")
 
-all_keys_anchor = "ALL_KEYS = new PropertyKey[] {"
-all_keys_replacement = """ALL_KEYS = new PropertyKey[] {
+# 2. Inject keys into ALL_KEYS array using flexible whitespace/newline matching
+if "TILT_X_IN_DEGREES," not in lt_c:
+    all_keys_addition = """
             TILT_X_IN_DEGREES,
             TILT_Y_IN_DEGREES,
             SIDE_BORDER_SCALE,
@@ -112,10 +124,27 @@ all_keys_replacement = """ALL_KEYS = new PropertyKey[] {
             SATURATION,
             CLOSE_BUTTON_IS_ON_RIGHT,
             CLOSE_PLACEMENT,"""
-patch_file(lt_path, all_keys_anchor, all_keys_replacement, "LayoutTab.java ALL_KEYS array expansion")
 
-constructor_anchor = "public LayoutTab("
-methods_addition = """    private float mTiltX;
+    all_keys_match = re.search(r"ALL_KEYS\s*=\s*(?:new\s+PropertyKey\[\]\s*)?\{", lt_c)
+    if all_keys_match:
+        idx = all_keys_match.end()
+        lt_c = lt_c[:idx] + all_keys_addition + lt_c[idx:]
+        print("[aerium] Injected PropertyKeys into ALL_KEYS array")
+    else:
+        border_match = re.search(r"(\s+BORDER_ALPHA,)", lt_c)
+        if border_match:
+            idx = border_match.end()
+            lt_c = lt_c[:idx] + all_keys_addition + lt_c[idx:]
+            print("[aerium] Injected PropertyKeys into ALL_KEYS array (via BORDER_ALPHA,)")
+        else:
+            print(f"[FATAL] Could not find ALL_KEYS array or BORDER_ALPHA, in {lt_path}")
+            sys.exit(1)
+else:
+    print("[aerium] Already patched: LayoutTab.java ALL_KEYS array expansion")
+
+# 3. Inject methods before constructor
+if "public void setTiltX(" not in lt_c:
+    methods_addition = """    private float mTiltX;
     private float mTiltY;
     private float mMaxContentWidth;
     private float mMaxContentHeight;
@@ -150,8 +179,20 @@ methods_addition = """    private float mTiltX;
         try { return get(key) != 0.0f; } catch (Exception e) { return false; }
     }
 
-    public LayoutTab("""
-patch_file(lt_path, constructor_anchor, methods_addition, "LayoutTab.java stack methods")
+    """
+    ctor_match = re.search(r"public\s+LayoutTab\s*\(", lt_c)
+    if not ctor_match:
+        print(f"[FATAL] Could not find 'public LayoutTab(' constructor in {lt_path}")
+        sys.exit(1)
+    idx = ctor_match.start()
+    lt_c = lt_c[:idx] + methods_addition + lt_c[idx:]
+    print("[aerium] Injected stack methods into LayoutTab.java")
+else:
+    print("[aerium] Already patched: LayoutTab.java stack methods")
+
+with open(lt_path, "w", encoding="utf-8") as f:
+    f.write(lt_c)
+print("[aerium] Step 1: LayoutTab.java successfully updated")
 
 # ==============================================================================
 # STEP 2: INJECT releaseTabLayout & SHOW_CLOSE_BUTTON IN Layout.java
