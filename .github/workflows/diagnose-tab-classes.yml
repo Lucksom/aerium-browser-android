@@ -1,4 +1,4 @@
-name: Inspect Target Files for Classic Stack
+name: Inspect M153 APIs for Classic Stack
 
 on:
   workflow_dispatch:
@@ -12,14 +12,13 @@ jobs:
           set +e
           VERSION="153.0.8010.36"
 
-          # Helper function: tries GitHub Raw CDN first, falls back to Gitiles
           fetch_raw() {
             local file_path="$1"
             local out_name="$2"
 
             local gh_url="https://raw.githubusercontent.com/chromium/chromium/${VERSION}/${file_path}"
             local status=$(curl -sL -w "%{http_code}" -o "$out_name" "$gh_url")
-
+            
             if [ "$status" -eq 200 ] && [ -s "$out_name" ]; then
               echo ">>> Fetched $out_name via GitHub Raw"
               return 0
@@ -43,19 +42,71 @@ jobs:
           }
 
           echo "=========================================================="
-          echo "### 1. Inspecting TabsSettings.java (Full Content) ###"
+          echo "### 1. LayoutType.java ###"
           echo "=========================================================="
-          fetch_raw "chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabsSettings.java" "TabsSettings.java"
-          if [ -s TabsSettings.java ]; then
-            nl -ba TabsSettings.java
+          fetch_raw "chrome/android/java/src/org/chromium/chrome/browser/compositor/layouts/LayoutType.java" "LayoutType.java"
+          if [ -s LayoutType.java ]; then
+            cat LayoutType.java
           fi
 
           echo
           echo "=========================================================="
-          echo "### 2. Inspecting TabUiFeatureUtilities.java (Tail & Structure) ###"
+          echo "### 2. Layout.java (Key Signatures & Overrides) ###"
           echo "=========================================================="
-          fetch_raw "chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabUiFeatureUtilities.java" "TabUiFeatureUtilities.java"
-          if [ -s TabUiFeatureUtilities.java ]; then
-            echo "--- Last 40 lines of TabUiFeatureUtilities.java ---"
-            tail -n 40 TabUiFeatureUtilities.java | nl -ba
+          fetch_raw "chrome/android/java/src/org/chromium/chrome/browser/compositor/layouts/Layout.java" "Layout.java"
+          if [ -s Layout.java ]; then
+            echo "--- releaseTabLayout ---"
+            grep -n -C 5 "releaseTabLayout" Layout.java
+            echo "--- setTabModelSelector ---"
+            grep -n -C 5 "setTabModelSelector" Layout.java
+            echo "--- startHiding ---"
+            grep -n -C 5 "startHiding" Layout.java
+            echo "--- Abstract methods ---"
+            grep -n "abstract" Layout.java
+          fi
+
+          echo
+          echo "=========================================================="
+          echo "### 3. LayoutTab.java (Existing Properties & Visibility) ###"
+          echo "=========================================================="
+          fetch_raw "chrome/android/java/src/org/chromium/chrome/browser/compositor/layouts/components/LayoutTab.java" "LayoutTab.java"
+          if [ -s LayoutTab.java ]; then
+            echo "--- Property Keys defined in LayoutTab ---"
+            grep -n "PropertyKey" LayoutTab.java | head -n 40
+            echo "--- Visibility / Clipping methods ---"
+            grep -n -E "isVisible|setVisible|setClip|getClipped" LayoutTab.java
+          fi
+
+          echo
+          echo "=========================================================="
+          echo "### 4. TabModelSelector.java & TabModelUtils.java ###"
+          echo "=========================================================="
+          fetch_raw "chrome/browser/tabmodel/android/java/src/org/chromium/chrome/browser/tabmodel/TabModelSelector.java" "TabModelSelector.java"
+          if [ -s TabModelSelector.java ]; then
+            echo "--- Model index / selection methods in TabModelSelector ---"
+            grep -n -E "getCurrentModel|getModel|isIncognitoSelected" TabModelSelector.java
+          fi
+
+          fetch_raw "chrome/browser/tabmodel/android/java/src/org/chromium/chrome/browser/tabmodel/TabModelUtils.java" "TabModelUtils.java"
+          if [ -s TabModelUtils.java ]; then
+            echo "--- Methods in TabModelUtils ---"
+            grep -n "public static" TabModelUtils.java
+          fi
+
+          echo
+          echo "=========================================================="
+          echo "### 5. TabThemeColorHelper.java ###"
+          echo "=========================================================="
+          fetch_raw "chrome/browser/ui/android/theme/java/src/org/chromium/chrome/browser/theme/TabThemeColorHelper.java" "TabThemeColorHelper.java"
+          if [ -s TabThemeColorHelper.java ]; then
+            grep -n -C 3 "getBackgroundColor" TabThemeColorHelper.java
+          fi
+
+          echo
+          echo "=========================================================="
+          echo "### 6. TabListCoordinator.java (Lines 755-775) ###"
+          echo "=========================================================="
+          fetch_raw "chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabListCoordinator.java" "TabListCoordinator.java"
+          if [ -s TabListCoordinator.java ]; then
+            sed -n '750,780p' TabListCoordinator.java | nl -ba -v 750
           fi
