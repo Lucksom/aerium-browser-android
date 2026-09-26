@@ -1,16 +1,14 @@
-name: Inspect LayoutManager and Interpolators
+name: Fetch Specific Files Directly
 
 on:
   workflow_dispatch:
 
 jobs:
-  inspect:
+  fetch:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout Repository
+      - name: Checkout repo (to read vanadium/args.gn)
         uses: actions/checkout@v4
-        with:
-          submodules: true
 
       - name: Resolve Chromium Version
         run: |
@@ -18,45 +16,26 @@ jobs:
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
           echo "Target Chromium Version: $VERSION"
 
-      - name: Sparse Clone and Inspect Layout Components
+      - name: Fetch and Dump LayoutManagerChromePhone.java
         run: |
           set -e
-
-          # 1. Initialize clone with sparse checkout
-          git clone --filter=blob:none --sparse --no-checkout --depth 1 \
-            --branch "$VERSION" \
-            https://chromium.googlesource.com/chromium/src.git chromium-src
+          URL="https://chromium.googlesource.com/chromium/src/+/${VERSION}/chrome/android/java/src/org/chromium/chrome/browser/compositor/layouts/LayoutManagerChromePhone.java?format=TEXT"
           
-          cd chromium-src
-
-          # 2. Define all target directories upfront in one batch
-          git sparse-checkout set \
-            chrome/android/java/src/org/chromium/chrome/browser/compositor/layouts \
-            chrome/android/java/src/org/chromium/chrome/browser/hub \
-            components/browser_ui/widget/android/java/src/org/chromium/components/browser_ui/widget/animation \
-            ui/android/java/src/org/chromium/ui/interpolators
-
-          # 3. Check out target ref with all blobs retrieved
-          git checkout "$VERSION"
+          echo "Fetching LayoutManagerChromePhone.java from $URL..."
+          curl -sL "$URL" | base64 -d > LayoutManagerChromePhone.java
 
           echo "=========================================================="
-          echo "### 1. LOCATE INTERPOLATORS IN M153 ###"
+          echo "### LayoutManagerChromePhone.java Content ###"
           echo "=========================================================="
-          find . -name "Interpolators.java"
+          cat LayoutManagerChromePhone.java
 
-          echo
-          echo "=========================================================="
-          echo "### 2. LOCATE LAYOUT MANAGERS ###"
-          echo "=========================================================="
-          find chrome/android -name "*LayoutManager*.java"
+      - name: Test Interpolators.java Location
+        run: |
+          set +e
+          echo "Testing location 1 (ui/interpolators)..."
+          HTTP_CODE_1=$(curl -s -o /dev/null -w "%{http_code}" "https://chromium.googlesource.com/chromium/src/+/${VERSION}/ui/android/java/src/org/chromium/ui/interpolators/Interpolators.java?format=TEXT")
+          echo "ui/interpolators: HTTP $HTTP_CODE_1"
 
-          echo
-          echo "=========================================================="
-          echo "### 3. DUMP LayoutManagerChromePhone.java ###"
-          echo "=========================================================="
-          LM_PHONE="chrome/android/java/src/org/chromium/chrome/browser/compositor/layouts/LayoutManagerChromePhone.java"
-          if [ -f "$LM_PHONE" ]; then
-            cat "$LM_PHONE"
-          else
-            echo "[ERROR] Could not find $LM_PHONE"
-          fi
+          echo "Testing location 2 (components/browser_ui/widget/animation)..."
+          HTTP_CODE_2=$(curl -s -o /dev/null -w "%{http_code}" "https://chromium.googlesource.com/chromium/src/+/${VERSION}/components/browser_ui/widget/android/java/src/org/chromium/components/browser_ui/widget/animation/Interpolators.java?format=TEXT")
+          echo "components/browser_ui: HTTP $HTTP_CODE_2"
