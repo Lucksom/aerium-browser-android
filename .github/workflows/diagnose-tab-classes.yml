@@ -1,32 +1,85 @@
-      - name: Fetch and inspect LayoutManagerChromePhone in M153
+name: Inspect ScrollDirection and GN target v2
+
+on:
+  workflow_dispatch:
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Resolve Chromium version
+        run: |
+          VERSION=$(grep -m1 -o '[0-9]\+\(\.[0-9]\+\)\{3\}' vanadium/args.gn)
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+
+      - name: Sparse-checkout only the likely candidate directories (one batched fetch)
+        run: |
+          git clone --filter=blob:none --sparse --no-checkout --depth 1 \
+            --branch "$VERSION" \
+            https://chromium.googlesource.com/chromium/src.git chromium-src
+          cd chromium-src
+          git sparse-checkout set \
+            chrome/android/java/src/org/chromium/chrome/browser/compositor \
+            chrome/browser/ui/android/layouts \
+            components/browser_ui/widget/gesture \
+            chrome/android
+          git checkout "$VERSION"
+
+      - name: Search for ScrollDirection locally (no more network calls)
         working-directory: chromium-src
         run: |
           set +e
-          # 1. Add layout manager directories to sparse checkout
-          git sparse-checkout add \
-            chrome/android/java/src/org/chromium/chrome/browser/compositor/layouts \
-            chrome/android/java/src/org/chromium/chrome/browser/hub \
-            ui/android/java/src/org/chromium/ui/interpolators \
-            components/browser_ui/widget/android/java/src/org/chromium/components/browser_ui/widget/animation
-          git checkout "$VERSION"
-
-          echo "=========================================================="
-          echo "### 1. Locate Interpolators in M153 ###"
-          find . -name "Interpolators.java" 2>/dev/null
+          echo "### 1. Any file literally named ScrollDirection.java? ###"
+          result=$(find . -iname "ScrollDirection.java" 2>/dev/null)
+          [ -n "$result" ] && echo "$result" || echo "(none found)"
 
           echo
-          echo "=========================================================="
-          echo "### 2. Inspect Tab Switcher Layout Creation in LayoutManagerChromePhone ###"
-          LM="chrome/android/java/src/org/chromium/chrome/browser/compositor/layouts/LayoutManagerChromePhone.java"
-          if [ -f "$LM" ]; then
-            echo "--- Matching layout initialization lines ---"
-            grep -n -C 5 "createLayout\|TabSwitcherLayout\|HubLayout\|startShowing" "$LM"
+          echo "### 2. Any file defining interface/enum ScrollDirection ###"
+          result=$(grep -rn "interface ScrollDirection\|enum ScrollDirection" --include=*.java . 2>/dev/null)
+          [ -n "$result" ] && echo "$result" || echo "(none found)"
 
-            echo
-            echo "--- Full Content of LayoutManagerChromePhone.java ---"
-            cat "$LM"
-          else
-            echo "[ERROR] $LM not found, searching tree:"
-            find . -name "LayoutManagerChromePhone.java"
+          echo
+          echo "### 3. Every import of ScrollDirection (any package) ###"
+          result=$(grep -rn "import.*ScrollDirection;" --include=*.java . 2>/dev/null)
+          [ -n "$result" ] && echo "$result" || echo "(none found)"
+
+          echo
+          echo "### 4. Broader fallback: any .java file with ScrollDirection in its content ###"
+          result=$(grep -rl "ScrollDirection" --include=*.java . 2>/dev/null | head -10)
+          [ -n "$result" ] && echo "$result" || echo "(none found)"
+
+      - name: Find the GN target listing Layout.java, and its full deps
+        working-directory: chromium-src
+        run: |
+          set +e
+          echo "### Step 1: Find GN/gni files mentioning Layout.java or LayoutManagerChromePhone.java ###"
+          matches=$(grep -rl "compositor/layouts/phone/Layout.java\|LayoutManagerChromePhone.java" \
+                     --include=*.gn --include=*.gni chrome/android 2>/dev/null)
+          
+          if [ -z "$matches" ]; then
+            echo "[aerium] No exact matches found. Trying broader search..."
+            matches=$(grep -rl "Layout\.java" --include=*.gn --include=*.gni chrome/android 2>/dev/null | head -5)
           fi
-          echo "=========================================================="
+
+          echo "Found in: $matches"
+
+          echo
+          for f in $matches; do
+            echo "=========================================="
+            echo "FILE: $f"
+            echo "=========================================="
+            cat "$f"
+            echo
+            echo "### Checking for supplier_java dependency in this file ###"
+            if grep -q "supplier_java\|base:supplier" "$f"; then
+              echo "[FOUND] supplier_java is already a dependency"
+              grep -n "supplier_java\|base:supplier" "$f"
+            else
+              echo "[NOT FOUND] supplier_java is NOT listed as a dependency — likely the ObservableSupplier compile error cause"
+            fi
+            echo
+          done
