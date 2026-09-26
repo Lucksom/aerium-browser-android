@@ -1,67 +1,64 @@
-name: Probe LayoutTab and Compositor APIs in M153
+name: Inspect LayoutTab and Layout Symbols
 
 on:
   workflow_dispatch:
 
 jobs:
-  probe:
+  inspect:
     runs-on: ubuntu-latest
     steps:
-      - name: Probe M153 Layout and Native APIs
+      - name: Sparse Checkout Layouts via Git Protocol
         run: |
-          set +e
+          set -e
           VERSION="153.0.8010.36"
-          BASE_URL="https://chromium.googlesource.com/chromium/src/+/refs/tags/${VERSION}"
+          echo "Inspecting Chromium $VERSION layouts..."
+
+          # Git upload-pack protocol is immune to Gitiles 503 web throttling
+          git clone --filter=blob:none --sparse --no-checkout --depth 1 \
+            --branch "$VERSION" \
+            https://chromium.googlesource.com/chromium/src.git chromium-src
+
+          cd chromium-src
+          git sparse-checkout set \
+            chrome/android/java/src/org/chromium/chrome/browser/compositor/layouts
+
+          git checkout "$VERSION"
 
           echo "=========================================================="
-          echo "### 1. PROBING LayoutTab.java SYMBOLS ###"
+          echo "### 1. LayoutTab.java Tilt & Border Properties ###"
           echo "=========================================================="
-          LAYOUT_TAB_URL="${BASE_URL}/chrome/android/java/src/org/chromium/chrome/browser/compositor/layouts/components/LayoutTab.java?format=TEXT"
-          curl -sL "$LAYOUT_TAB_URL" | base64 -d > LayoutTab.java 2>/dev/null
-
-          if [ -s LayoutTab.java ]; then
-            echo "LayoutTab.java fetched successfully."
-            echo "--- Checking for Tilt & 3D properties ---"
-            grep -E "TILT_X|TILT_Y|setTilt|SIDE_BORDER_SCALE|BORDER_CLOSE_BUTTON_ALPHA" LayoutTab.java || echo "[MISSING] Tilt/Border properties missing from LayoutTab!"
-            
-            echo "--- Checking for Close Button properties ---"
-            grep -E "CLOSE_BUTTON_WIDTH_DP|CLOSE_PLACEMENT|CLOSE_BUTTON_IS_ON_RIGHT" LayoutTab.java || echo "[MISSING] Close placement properties missing!"
+          LT="chrome/android/java/src/org/chromium/chrome/browser/compositor/layouts/components/LayoutTab.java"
+          if [ -f "$LT" ]; then
+            echo "[FOUND] LayoutTab.java"
+            echo "--- Tilt properties ---"
+            grep -n -E "TILT_X|TILT_Y|setTilt|getTilt" "$LT" || echo "[NONE] Tilt properties missing"
+            echo "--- Border properties ---"
+            grep -n -E "SIDE_BORDER_SCALE|BORDER_CLOSE_BUTTON_ALPHA|BORDER_ALPHA" "$LT" || echo "[NONE] Border properties missing"
+            echo "--- Close button properties ---"
+            grep -n -E "CLOSE_BUTTON_WIDTH_DP|CLOSE_PLACEMENT|CLOSE_BUTTON_IS_ON_RIGHT" "$LT" || echo "[NONE] Close button properties missing"
           else
-            echo "[ERROR] Failed to fetch LayoutTab.java (HTTP 404)"
+            echo "[ERROR] File not found at expected path: $LT"
           fi
 
           echo
           echo "=========================================================="
-          echo "### 2. PROBING Layout.java FOR createLayoutTab ###"
+          echo "### 2. Layout.java createLayoutTab Method ###"
           echo "=========================================================="
-          LAYOUT_URL="${BASE_URL}/chrome/android/java/src/org/chromium/chrome/browser/compositor/layouts/Layout.java?format=TEXT"
-          curl -sL "$LAYOUT_URL" | base64 -d > Layout.java 2>/dev/null
-
-          if [ -s Layout.java ]; then
-            echo "Layout.java fetched successfully."
-            echo "--- Checking createLayoutTab & SHOW_CLOSE_BUTTON ---"
-            grep -n -C 2 "createLayoutTab" Layout.java || echo "[MISSING] createLayoutTab() method missing from Layout.java!"
-            grep -n "SHOW_CLOSE_BUTTON" Layout.java || echo "[MISSING] SHOW_CLOSE_BUTTON constant missing!"
+          L="chrome/android/java/src/org/chromium/chrome/browser/compositor/layouts/Layout.java"
+          if [ -f "$L" ]; then
+            echo "[FOUND] Layout.java"
+            grep -n -C 4 "createLayoutTab" "$L" || echo "[NONE] createLayoutTab not found in Layout.java"
+            grep -n "SHOW_CLOSE_BUTTON" "$L" || echo "[NONE] SHOW_CLOSE_BUTTON not found in Layout.java"
           else
-            echo "[ERROR] Failed to fetch Layout.java (HTTP 404)"
+            echo "[ERROR] File not found at expected path: $L"
           fi
 
           echo
           echo "=========================================================="
-          echo "### 3. PROBING LayoutRenderHost.java ###"
+          echo "### 3. LayoutRenderHost.java TitleCache Method ###"
           echo "=========================================================="
-          HOST_URL="${BASE_URL}/chrome/android/java/src/org/chromium/chrome/browser/compositor/layouts/LayoutRenderHost.java?format=TEXT"
-          curl -sL "$HOST_URL" | base64 -d > LayoutRenderHost.java 2>/dev/null
-
-          if [ -s LayoutRenderHost.java ]; then
-            echo "LayoutRenderHost.java fetched successfully."
-            grep -n -C 2 "getTitleCache" LayoutRenderHost.java || echo "[NOTICE] getTitleCache() not on LayoutRenderHost"
+          LRH="chrome/android/java/src/org/chromium/chrome/browser/compositor/layouts/LayoutRenderHost.java"
+          if [ -f "$LRH" ]; then
+            echo "[FOUND] LayoutRenderHost.java"
+            grep -n -C 3 "getTitleCache" "$LRH" || echo "[NONE] getTitleCache not in LayoutRenderHost.java"
           fi
-
-          echo
-          echo "=========================================================="
-          echo "### 4. PROBING NATIVE TabLayer (C++) IN M153 ###"
-          echo "=========================================================="
-          TAB_LAYER_H="${BASE_URL}/chrome/browser/android/compositor/layer/tab_layer.h?format=TEXT"
-          STATUS=$(curl -sL -o /dev/null -w "%{http_code}" "$TAB_LAYER_H")
-          echo "Native tab_layer.h status: HTTP $STATUS"
