@@ -20,31 +20,61 @@ def find_file(filename, path_hint=""):
         and not p.startswith(f"out{os.sep}")
         and tp_sub not in p
         and not p.startswith(f"third_party{os.sep}")
-        and (not path_hint or path_hint in p)
     ]
+    if path_hint:
+        matches = [p for p in matches if path_hint in p]
+
     if not matches:
         print(f"[FATAL] Target file not found: {filename} (hint: '{path_hint}')")
         sys.exit(1)
+    if len(matches) > 1:
+        print(f"[FATAL] Ambiguous file resolution for '{filename}'. Multiple candidates found:\n" + "\n".join(matches))
+        sys.exit(1)
+
     return matches[0]
+
+def patch_file(filepath, anchor, replacement, description):
+    """Replaces text in a file with strict existence verification (no silent failures)."""
+    with open(filepath, "r", encoding="utf-8") as f:
+        content = f.read()
+
+    if replacement in content:
+        print(f"[aerium] Already patched: {description}")
+        return
+
+    if anchor not in content:
+        print(f"\n[FATAL] Anchor text not found in {filepath} for: {description}")
+        print("Expected anchor preview:")
+        print("--------------------------------------------------")
+        print(anchor[:200])
+        print("--------------------------------------------------")
+        sys.exit(1)
+
+    new_content = content.replace(anchor, replacement, 1)
+    with open(filepath, "w", encoding="utf-8") as f:
+        f.write(new_content)
+    print(f"[aerium] Successfully applied: {description}")
 
 src_root = os.getcwd()
 script_dir = os.path.dirname(os.path.abspath(__file__))
 
-# Robust search for patches/classic_stack directory
-possible_patch_dirs = [
+possible_dirs = [
     os.path.join(script_dir, "classic_stack"),
     os.path.join(src_root, "patches", "classic_stack"),
     os.path.join(src_root, "..", "patches", "classic_stack"),
-    os.path.join(src_root, "..", "..", "patches", "classic_stack"),
 ]
 if "GITHUB_WORKSPACE" in os.environ:
-    possible_patch_dirs.insert(0, os.path.join(os.environ["GITHUB_WORKSPACE"], "patches", "classic_stack"))
+    possible_dirs.insert(0, os.path.join(os.environ["GITHUB_WORKSPACE"], "patches", "classic_stack"))
 
 patch_dir = None
-for candidate in possible_patch_dirs:
+for candidate in possible_dirs:
     if os.path.isdir(candidate):
         patch_dir = os.path.abspath(candidate)
         break
+
+if not patch_dir:
+    print(f"[FATAL] Could not locate patches/classic_stack directory. Checked: {possible_dirs}")
+    sys.exit(1)
 
 print(f"[aerium] Resolved patch_dir: {patch_dir}")
 
@@ -52,56 +82,94 @@ print(f"[aerium] Resolved patch_dir: {patch_dir}")
 # STEP 1: RESTORE MISSING STACK PROPERTIES IN LayoutTab.java
 # ==============================================================================
 lt_path = find_file("LayoutTab.java", path_hint=os.path.join("compositor", "layouts", "components"))
-with open(lt_path, "r", encoding="utf-8") as f:
-    lt_c = f.read()
 
-if "TILT_X_IN_DEGREES" not in lt_c:
-    keys_anchor = "public static final WritableFloatPropertyKey BORDER_ALPHA = new WritableFloatPropertyKey();"
-    missing_keys = """public static final WritableFloatPropertyKey BORDER_ALPHA = new WritableFloatPropertyKey();
+keys_anchor = "public static final WritableFloatPropertyKey BORDER_ALPHA = new WritableFloatPropertyKey();"
+keys_replacement = """public static final WritableFloatPropertyKey BORDER_ALPHA = new WritableFloatPropertyKey();
     public static final WritableFloatPropertyKey TILT_X_IN_DEGREES = new WritableFloatPropertyKey();
     public static final WritableFloatPropertyKey TILT_Y_IN_DEGREES = new WritableFloatPropertyKey();
     public static final WritableFloatPropertyKey SIDE_BORDER_SCALE = new WritableFloatPropertyKey();
     public static final WritableFloatPropertyKey BORDER_CLOSE_BUTTON_ALPHA = new WritableFloatPropertyKey();
+    public static final WritableFloatPropertyKey MAX_CONTENT_HEIGHT = new WritableFloatPropertyKey();
+    public static final WritableFloatPropertyKey TOOLBAR_Y_OFFSET = new WritableFloatPropertyKey();
+    public static final WritableFloatPropertyKey TOOLBAR_ALPHA = new WritableFloatPropertyKey();
+    public static final WritableFloatPropertyKey SATURATION = new WritableFloatPropertyKey();
     public static final org.chromium.ui.modelutil.PropertyModel.WritableBooleanPropertyKey CLOSE_BUTTON_IS_ON_RIGHT =
             new org.chromium.ui.modelutil.PropertyModel.WritableBooleanPropertyKey();
     public static final org.chromium.ui.modelutil.PropertyModel.WritableObjectPropertyKey<android.graphics.RectF> CLOSE_PLACEMENT =
             new org.chromium.ui.modelutil.PropertyModel.WritableObjectPropertyKey<>();
-    public static final float CLOSE_BUTTON_WIDTH_DP = 36.0f;
-"""
-    lt_c = lt_c.replace(keys_anchor, missing_keys, 1)
+    public static final float CLOSE_BUTTON_WIDTH_DP = 36.0f;"""
+patch_file(lt_path, keys_anchor, keys_replacement, "LayoutTab.java missing PropertyKeys")
 
-    methods_hook = """
-    public void setTiltX(float angle, float pivot) { set(TILT_X_IN_DEGREES, angle); }
-    public void setTiltY(float angle, float pivot) { set(TILT_Y_IN_DEGREES, angle); }
-    public float getTiltX() { return get(TILT_X_IN_DEGREES); }
-    public float getTiltY() { return get(TILT_Y_IN_DEGREES); }
-    public void setBorderCloseButtonAlpha(float alpha) { set(BORDER_CLOSE_BUTTON_ALPHA, alpha); }
-    public void setCloseButtonIsOnRight(boolean onRight) { set(CLOSE_BUTTON_IS_ON_RIGHT, onRight); }
-    public boolean isCloseButtonOnRight() { return get(CLOSE_BUTTON_IS_ON_RIGHT); }
-"""
-    last_brace = lt_c.rfind("}")
-    if last_brace != -1:
-        lt_c = lt_c[:last_brace] + methods_hook + "\n}\n"
+all_keys_anchor = "ALL_KEYS = new PropertyKey[] {"
+all_keys_replacement = """ALL_KEYS = new PropertyKey[] {
+            TILT_X_IN_DEGREES,
+            TILT_Y_IN_DEGREES,
+            SIDE_BORDER_SCALE,
+            BORDER_CLOSE_BUTTON_ALPHA,
+            MAX_CONTENT_HEIGHT,
+            TOOLBAR_Y_OFFSET,
+            TOOLBAR_ALPHA,
+            SATURATION,
+            CLOSE_BUTTON_IS_ON_RIGHT,
+            CLOSE_PLACEMENT,"""
+patch_file(lt_path, all_keys_anchor, all_keys_replacement, "LayoutTab.java ALL_KEYS array expansion")
 
-    with open(lt_path, "w", encoding="utf-8") as f:
-        f.write(lt_c)
-    print("[aerium] Step 1: Restored 3D tilt & close button properties in LayoutTab.java")
+constructor_anchor = "public LayoutTab("
+methods_addition = """    private float mTiltX;
+    private float mTiltY;
+    private float mMaxContentWidth;
+    private float mMaxContentHeight;
+    private boolean mCloseButtonOnRight;
+    private float mBorderCloseButtonAlpha;
+
+    public void setTiltX(float angle, float pivot) { mTiltX = angle; }
+    public void setTiltY(float angle, float pivot) { mTiltY = angle; }
+    public float getTiltX() { return mTiltX; }
+    public float getTiltY() { return mTiltY; }
+    public void setBorderCloseButtonAlpha(float alpha) { mBorderCloseButtonAlpha = alpha; }
+    public float getBorderCloseButtonAlpha() { return mBorderCloseButtonAlpha; }
+    public void setCloseButtonIsOnRight(boolean onRight) { mCloseButtonOnRight = onRight; }
+    public boolean isCloseButtonOnRight() { return mCloseButtonOnRight; }
+    public float getUnclampedOriginalContentHeight() { return getOriginalContentHeight(); }
+    public float getMaxContentWidth() { return mMaxContentWidth > 0 ? mMaxContentWidth : getOriginalContentWidth(); }
+    public float getMaxContentHeight() { return mMaxContentHeight > 0 ? mMaxContentHeight : getOriginalContentHeight(); }
+    public void setMaxContentWidth(float w) { mMaxContentWidth = w; }
+    public void setMaxContentHeight(float h) { mMaxContentHeight = h; }
+    public boolean shouldStall() { return false; }
+    public void setInsetBorderVertical(boolean inset) {}
+    public void setShowToolbar(boolean show) {}
+    public void setToolbarAlpha(float alpha) { set(TOOLBAR_ALPHA, alpha); }
+    public float getToolbarAlpha() { return has(TOOLBAR_ALPHA) ? get(TOOLBAR_ALPHA) : 0f; }
+    public void setAnonymizeToolbar(boolean anonymize) {}
+    public void setDrawDecoration(boolean draw) {}
+    public void setDecorationAlpha(float alpha) {}
+    public void setBorderScale(float scale) {}
+    public float getFinalContentWidth() { return getScaledContentWidth(); }
+    public float getFinalContentHeight() { return getScaledContentHeight(); }
+    private boolean has(org.chromium.ui.modelutil.PropertyModel.WritableFloatPropertyKey key) {
+        try { return get(key) != 0.0f; } catch (Exception e) { return false; }
+    }
+
+    public LayoutTab("""
+patch_file(lt_path, constructor_anchor, methods_addition, "LayoutTab.java stack methods")
 
 # ==============================================================================
-# STEP 2: DEPLOY & SANITIZE M88 COMPOSITOR JAVA SOURCES
+# STEP 2: INJECT releaseTabLayout & SHOW_CLOSE_BUTTON IN Layout.java
 # ==============================================================================
-dest_scene_layer = os.path.join(
-    src_root, "chrome", "android", "java", "src", "org", "chromium",
-    "chrome", "browser", "compositor", "scene_layer"
-)
-dest_layouts_phone = os.path.join(
-    src_root, "chrome", "android", "java", "src", "org", "chromium",
-    "chrome", "browser", "compositor", "layouts", "phone"
-)
-dest_layouts_stack = os.path.join(
-    src_root, "chrome", "android", "java", "src", "org", "chromium",
-    "chrome", "browser", "compositor", "layouts", "phone", "stack"
-)
+l_path = find_file("Layout.java", path_hint=os.path.join("compositor", "layouts"))
+layout_anchor = "public LayoutTab createLayoutTab(int id, boolean isIncognito) {"
+layout_replacement = """public static final boolean SHOW_CLOSE_BUTTON = true;
+    public void releaseTabLayout(org.chromium.chrome.browser.compositor.layouts.components.LayoutTab tab) {}
+
+    public LayoutTab createLayoutTab(int id, boolean isIncognito) {"""
+patch_file(l_path, layout_anchor, layout_replacement, "Layout.java releaseTabLayout and SHOW_CLOSE_BUTTON")
+
+# ==============================================================================
+# STEP 3: DEPLOY & PRECISELY SANITIZE M88 JAVA SOURCES
+# ==============================================================================
+dest_scene_layer = os.path.join(src_root, "chrome", "android", "java", "src", "org", "chromium", "chrome", "browser", "compositor", "scene_layer")
+dest_layouts_phone = os.path.join(src_root, "chrome", "android", "java", "src", "org", "chromium", "chrome", "browser", "compositor", "layouts", "phone")
+dest_layouts_stack = os.path.join(src_root, "chrome", "android", "java", "src", "org", "chromium", "chrome", "browser", "compositor", "layouts", "phone", "stack")
 
 file_mappings = {
     "ClassicStackSceneLayer.java": dest_scene_layer,
@@ -115,90 +183,35 @@ file_mappings = {
     "StackViewAnimation.java": dest_layouts_stack,
 }
 
-for filename, target_dir in file_mappings.items():
-    src_file = None
-    if patch_dir:
-        candidate = os.path.join(patch_dir, filename)
-        if os.path.exists(candidate):
-            src_file = candidate
+# Targeted denylist: only verified deleted M88 resources
+KNOWN_DELETED_RESOURCES = [
+    "R.dimen.stacked_tab_visible_size",
+    "R.dimen.stack_buffer_width",
+    "R.dimen.stack_buffer_height",
+    "R.dimen.over_scroll",
+    "R.integer.over_scroll_angle",
+    "R.dimen.over_scroll_slide",
+    "R.dimen.tabswitcher_border_frame_transparent_top",
+    "R.dimen.tabswitcher_border_frame_transparent_side",
+    "R.dimen.tabswitcher_border_frame_padding_top",
+    "R.dimen.tabswitcher_border_frame_padding_left",
+    "R.dimen.compositor_button_slop",
+    "R.dimen.even_out_scrolling",
+    "R.dimen.min_spacing",
+    "R.dimen.open_new_tab_animation_y_translation",
+]
 
-    if not src_file:
-        search_dirs = [script_dir, os.path.join(src_root, "..")]
-        for sdir in search_dirs:
-            matches = glob.glob(f"{sdir}/**/{filename}", recursive=True)
-            if matches:
-                src_file = matches[0]
-                break
+for filename, target_dir in file_mappings.items():
+    src_file = os.path.join(patch_dir, filename)
+    if not os.path.exists(src_file):
+        print(f"[FATAL] Source file {filename} does not exist in {patch_dir}!")
+        sys.exit(1)
 
     os.makedirs(target_dir, exist_ok=True)
-    dest_file = os.path.join(target_dir, filename)
+    with open(src_file, "r", encoding="utf-8") as f:
+        content = f.read()
 
-    if src_file and os.path.exists(src_file):
-        with open(src_file, "r", encoding="utf-8") as f:
-            content = f.read()
-    else:
-        # Automated fallback if auxiliary files weren't pushed to git yet
-        if filename == "StackScroller.java":
-            content = """// Copyright 2015 The Chromium Authors. All rights reserved.
-package org.chromium.chrome.browser.compositor.layouts.phone.stack;
-import android.content.Context;
-import android.view.ViewConfiguration;
-public class StackScroller {
-    private final SplineStackScroller mScrollerX;
-    private final SplineStackScroller mScrollerY;
-    public StackScroller(Context context) {
-        mScrollerX = new SplineStackScroller();
-        mScrollerY = new SplineStackScroller();
-    }
-    public final void setFrictionMultiplier(float frictionMultiplier) {}
-    public final void setXSnapDistance(int snapDistance) {}
-    public final void setYSnapDistance(int snapDistance) {}
-    public final void setCenteredXSnapIndexAtTouchDown(int index) {}
-    public final void setCenteredYSnapIndexAtTouchDown(int index) {}
-    public final boolean isFinished() { return mScrollerX.mFinished && mScrollerY.mFinished; }
-    public final void forceFinished(boolean finished) { mScrollerX.mFinished = mScrollerY.mFinished = finished; }
-    public final int getCurrX() { return mScrollerX.mCurrentPosition; }
-    public final int getCurrY() { return mScrollerY.mCurrentPosition; }
-    public final int getFinalX() { return mScrollerX.mFinal; }
-    public final int getFinalY() { return mScrollerY.mFinal; }
-    public final void setFinalX(int x) { mScrollerX.mFinal = x; }
-    public boolean computeScrollOffset(long time) { return false; }
-    public void startScroll(int startX, int startY, int dx, int dy, long startTime, int duration) {
-        mScrollerY.mCurrentPosition = mScrollerY.mFinal = startY + dy;
-    }
-    public boolean springBack(int startX, int startY, int minX, int maxX, int minY, int maxY, long time) { return false; }
-    public void fling(int startX, int startY, int velocityX, int velocityY, int minX, int maxX, int minY, int maxY, int overX, int overY, long time) {
-        mScrollerY.mCurrentPosition = mScrollerY.mFinal = startY;
-    }
-    public void flingXTo(int startX, int finalX, long time) { mScrollerX.mFinal = finalX; }
-    public void flingYTo(int startY, int finalY, long time) { mScrollerY.mFinal = finalY; }
-    public void abortAnimation() { forceFinished(true); }
-    static class SplineStackScroller {
-        int mCurrentPosition;
-        int mFinal;
-        boolean mFinished = true;
-    }
-}
-"""
-        elif filename == "StackViewAnimation.java":
-            content = """// Copyright 2015 The Chromium Authors. All rights reserved.
-package org.chromium.chrome.browser.compositor.layouts.phone.stack;
-import android.animation.Animator;
-import android.content.res.Resources;
-import android.view.ViewGroup;
-import org.chromium.chrome.browser.tabmodel.TabList;
-public class StackViewAnimation {
-    public StackViewAnimation(Resources resources) {}
-    public Animator createAnimatorForType(int type, StackTab[] tabs, ViewGroup container, TabList list, int focusIndex) {
-        return null;
-    }
-}
-"""
-        else:
-            print(f"[FATAL] Source file {filename} could not be resolved in {patch_dir} or {script_dir}!")
-            sys.exit(1)
-
-    # Sanitize imports and deprecated APIs
+    # Mechanical M153 import updates
     content = content.replace(
         "import org.chromium.chrome.browser.compositor.layouts.eventfilter.ScrollDirection;",
         "import org.chromium.components.browser_ui.widget.gesture.SwipeGestureListener.ScrollDirection;"
@@ -215,22 +228,32 @@ public class StackViewAnimation {
         "BakedBezierInterpolator.FADE_OUT_CURVE",
         "Interpolators.FAST_OUT_SLOW_IN_INTERPOLATOR"
     )
-    content = content.replace("LayoutManager.time()", "SystemClock.uptimeMillis()")
 
-    content = re.sub(
-        r"mLayout\.createLayoutTab\([^;]+\);",
-        "mLayout.createLayoutTab(tabId, isIncognito);",
-        content
-    )
-    content = re.sub(
-        r"mSceneLayer\.pushLayers\([^;]+\);",
-        """mSceneLayer.pushLayers(getContext(), viewport, contentViewport, this,
+    # Scoped file-specific modifications
+    if filename == "StackLayoutBase.java":
+        if "import android.os.SystemClock;" not in content:
+            content = "import android.os.SystemClock;\n" + content
+        content = content.replace("LayoutManager.time()", "SystemClock.uptimeMillis()")
+
+        push_pattern = r"mSceneLayer\.pushLayers\s*\([^;]+?\);"
+        push_replacement = """mSceneLayer.pushLayers(getContext(), viewport, contentViewport, this,
                 tabContentManager, resourceManager, browserControls,
-                SceneLayer.INVALID_RESOURCE_ID, 0, 0);""",
-        content
-    )
+                SceneLayer.INVALID_RESOURCE_ID, 0, 0);"""
+        content, count = re.subn(push_pattern, push_replacement, content, count=1)
+        if count == 0 and "SceneLayer.INVALID_RESOURCE_ID" not in content:
+            print(f"[FATAL] Could not find mSceneLayer.pushLayers call site in {filename}")
+            sys.exit(1)
 
-    # Neutralize deleted R.dimen/integer references
+    elif filename == "Stack.java":
+        content = content.replace("!mLayout.isHiding()", "!mLayout.isStartingToHide()")
+        create_pattern = r"mLayout\.createLayoutTab\s*\([^;]+?\);"
+        create_replacement = "mLayout.createLayoutTab(tabId, isIncognito);"
+        content, count = re.subn(create_pattern, create_replacement, content, count=1)
+        if count == 0 and "mLayout.createLayoutTab(tabId, isIncognito);" not in content:
+            print(f"[FATAL] Could not find mLayout.createLayoutTab call site in {filename}")
+            sys.exit(1)
+
+    # Neutralize deleted resource references with safe physical constants
     content = content.replace("res.getDimensionPixelOffset(R.dimen.stacked_tab_visible_size) * pxToDp", "28.0f")
     content = content.replace("res.getDimensionPixelOffset(R.dimen.stack_buffer_width) * pxToDp", "0.0f")
     content = content.replace("res.getDimensionPixelOffset(R.dimen.stack_buffer_height) * pxToDp", "0.0f")
@@ -245,18 +268,27 @@ public class StackViewAnimation {
     content = content.replace("1.0f / (res.getDimension(R.dimen.even_out_scrolling) * pxToDp)", "1.0f / 200.0f")
     content = content.replace("res.getDimensionPixelOffset(R.dimen.min_spacing) * pxToDp", "64.0f")
     content = content.replace("resources.getDimensionPixelSize(R.dimen.open_new_tab_animation_y_translation)", "(int) (50.0f * resources.getDisplayMetrics().density)")
-    content = content.replace("!mLayout.isHiding()", "!mLayout.isStartingToHide()")
 
+    # Targeted check: only fail if known-deleted resources slipped past replacement
+    for deleted_res in KNOWN_DELETED_RESOURCES:
+        if deleted_res in content:
+            print(f"[FATAL] Unreplaced deleted resource '{deleted_res}' found in {filename}")
+            sys.exit(1)
+
+    dest_file = os.path.join(target_dir, filename)
     with open(dest_file, "w", encoding="utf-8") as f:
         f.write(content)
-    print(f"[aerium] Deployed & sanitized: {filename} -> {dest_file}")
+    print(f"[aerium] Deployed: {filename} -> {dest_file}")
 
 # ==============================================================================
-# STEP 3: WRITE FULL NonOverlappingStack.java IMPLEMENTATION
+# STEP 4: DEPLOY AUTHENTIC NonOverlappingStack.java
 # ==============================================================================
 non_overlap_file = os.path.join(dest_layouts_stack, "NonOverlappingStack.java")
 with open(non_overlap_file, "w", encoding="utf-8") as f:
     f.write("""// Copyright 2018 The Chromium Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
 package org.chromium.chrome.browser.compositor.layouts.phone.stack;
 
 import android.content.Context;
@@ -273,14 +305,22 @@ public class NonOverlappingStack extends Stack {
         int LEFT = 0;
         int RIGHT = 1;
     }
+
     private static final float SCALE_FRACTION_SINGLE_TAB = 0.80f;
     private static final float SCALE_FRACTION_MULTIPLE_TABS = 0.54f;
     private static final float SPACING_SCREEN = 1.0f;
     private static final float EXTRA_SPACE_BETWEEN_TABS_DP = 25.0f;
+    private static final float STACK_PORTRAIT_Y_OFFSET_PROPORTION = 0.f;
+    private static final float STACK_LANDSCAPE_START_OFFSET_PROPORTION = 0.f;
+    private static final float STACK_LANDSCAPE_Y_OFFSET_PROPORTION = 0.f;
+
     private boolean mSuppressScrollClamping;
     private boolean mSwitchedAway;
+    private long mLastTouchDownTime;
+    private int mCenteredTabAtTouchDown;
 
     public NonOverlappingStack(Context context, StackLayoutBase layout) { super(context, layout); }
+
     private int getNonDyingTabCount() {
         if (mStackTabs == null) return 0;
         int dyingCount = 0;
@@ -289,32 +329,56 @@ public class NonOverlappingStack extends Stack {
         }
         return mStackTabs.length - dyingCount;
     }
-    @Override public float getScaleAmount() {
+
+    @Override
+    public float getScaleAmount() {
         if (getNonDyingTabCount() > 1) return SCALE_FRACTION_MULTIPLE_TABS;
         return SCALE_FRACTION_SINGLE_TAB;
     }
-    @Override protected void finishAnimation(long time) { super.finishAnimation(time); mSuppressScrollClamping = false; }
-    @Override protected boolean evenOutTabs(float amount, boolean allowReverseDirection) { return false; }
+
+    @Override
+    protected void finishAnimation(long time) {
+        super.finishAnimation(time);
+        mSuppressScrollClamping = false;
+    }
+
+    @Override
+    protected boolean evenOutTabs(float amount, boolean allowReverseDirection) { return false; }
+
     public int getCenteredTabIndex() {
         if (mSpacing == 0) return 0;
         return Math.round(-mScrollOffset / mSpacing);
     }
+
+    @Override
+    public void onDown(long time) {
+        super.onDown(time);
+        mLastTouchDownTime = time;
+        mCenteredTabAtTouchDown = getCenteredTabIndex();
+        mScroller.setCenteredYSnapIndexAtTouchDown(mCenteredTabAtTouchDown);
+    }
+
     @Override public void onLongPress(long time, float x, float y) {}
     @Override public void onPinch(long time, float x0, float y0, float x1, float y1, boolean firstEvent) {}
-    @Override protected void springBack(long time) {
+
+    @Override
+    protected void springBack(long time) {
         if (!mScroller.isFinished()) return;
         int newTarget = -getCenteredTabIndex() * mSpacing;
         mScroller.flingYTo((int) mScrollTarget, newTarget, time);
         setScrollTarget(newTarget, false);
         mLayout.requestUpdate();
     }
+
     @Override protected float getSpacingScreen() { return SPACING_SCREEN; }
     @Override protected boolean shouldStackTabsAtTop() { return false; }
     @Override protected boolean shouldStackTabsAtBottom() { return false; }
-    @Override protected float getStackPortraitYOffsetProportion() { return 0.f; }
-    @Override protected float getStackLandscapeStartOffsetProportion() { return 0.f; }
-    @Override protected float getStackLandscapeYOffsetProportion() { return 0.f; }
-    @Override protected void computeTabClippingVisibilityHelper() {
+    @Override protected float getStackPortraitYOffsetProportion() { return STACK_PORTRAIT_Y_OFFSET_PROPORTION; }
+    @Override protected float getStackLandscapeStartOffsetProportion() { return STACK_LANDSCAPE_START_OFFSET_PROPORTION; }
+    @Override protected float getStackLandscapeYOffsetProportion() { return STACK_LANDSCAPE_Y_OFFSET_PROPORTION; }
+
+    @Override
+    protected void computeTabClippingVisibilityHelper() {
         int centeredTab = getCenteredTabIndex();
         if (mStackTabs == null) return;
         for (int i = 0; i < mStackTabs.length; i++) {
@@ -326,9 +390,12 @@ public class NonOverlappingStack extends Stack {
             }
         }
     }
+
     @Override protected int computeReferenceIndex() { return getCenteredTabIndex(); }
     @Override protected boolean shouldCloseGapsBetweenTabs() { return false; }
-    @Override protected float getMinScroll(boolean allowUnderScroll) {
+
+    @Override
+    protected float getMinScroll(boolean allowUnderScroll) {
         if (mSuppressScrollClamping) return -Float.MAX_VALUE;
         if (mStackTabs == null) return 0;
         for (int i = mStackTabs.length - 1; i >= 0; i--) {
@@ -338,27 +405,45 @@ public class NonOverlappingStack extends Stack {
         }
         return 0;
     }
+
     @Override protected boolean allowOverscroll() { return false; }
-    @Override protected int computeSpacing(int layoutTabCount) {
+
+    @Override
+    protected int computeSpacing(int layoutTabCount) {
         return (int) Math.round(getScrollDimensionSize() * getScaleAmount() + EXTRA_SPACE_BETWEEN_TABS_DP);
     }
-    @Override protected void resetAllScrollOffset() {
+
+    @Override
+    protected void resetAllScrollOffset() {
         if (mTabList == null) return;
         mScrollOffset = -mTabList.index() * mSpacing;
         setScrollTarget(mScrollOffset, false);
     }
+
     @Override public float screenToScroll(float screenSpace) { return screenSpace; }
     @Override public float scrollToScreen(float scrollSpace) { return scrollSpace; }
-    @Override public float getMaxTabHeight() {
+
+    @Override
+    public float getMaxTabHeight() {
         if (getNonDyingTabCount() > 1) return mLayout.getHeight();
         return (SCALE_FRACTION_MULTIPLE_TABS / SCALE_FRACTION_SINGLE_TAB) * mLayout.getHeight();
     }
+
     public void suppressScrollClampingForAnimation() { mSuppressScrollClamping = true; }
+
     public void runSwitchAwayAnimation(@SwitchDirection int direction) {
+        if (mStackTabs == null || mSwitchedAway) {
+            mSwitchedAway = true;
+            mLayout.onSwitchAwayFinished();
+            return;
+        }
         mSwitchedAway = true;
+        mSuppressScrollClamping = true;
+        for (int i = 0; i < mStackTabs.length; i++) mStackTabs[i].setDiscardAmount(0);
         forceScrollStop();
         mLayout.onSwitchAwayFinished();
     }
+
     public void runSwitchToAnimation(@SwitchDirection int direction) {
         mSwitchedAway = false;
         mSuppressScrollClamping = false;
@@ -366,10 +451,10 @@ public class NonOverlappingStack extends Stack {
     }
 }
 """)
-print("[aerium] Step 3: Full NonOverlappingStack.java deployed")
+print("[aerium] Step 4: Deployed authentic NonOverlappingStack.java")
 
 # ==============================================================================
-# STEP 4: REGISTER ALL 10 COMPOSITOR SOURCES IN CHROME_JAVA_SOURCES.GNI
+# STEP 5: REGISTER SOURCES IN CHROME_JAVA_SOURCES.GNI
 # ==============================================================================
 gni_path = find_file("chrome_java_sources.gni")
 with open(gni_path, "r", encoding="utf-8") as f:
@@ -394,72 +479,48 @@ for entry in m88_entries:
     if entry.strip() not in gni_c:
         new_entries += entry
 
-if anchor in gni_c:
-    gni_c = gni_c.replace(anchor, anchor + new_entries, 1)
-    with open(gni_path, "w", encoding="utf-8") as f:
-        f.write(gni_c)
-    print("[aerium] Step 4: Registered 10 compositor sources in chrome_java_sources.gni")
-else:
-    print("[FATAL] Anchor ToolbarSwipeLayout.java not found in chrome_java_sources.gni")
-    sys.exit(1)
+patch_file(gni_path, anchor, anchor + new_entries, "chrome_java_sources.gni registration")
 
 # ==============================================================================
-# STEP 5: HOOK STACKLAYOUT INTO LAYOUTMANAGERCHROMEPHONE.JAVA
+# STEP 6: HOOK LayoutManagerChromePhone.java
 # ==============================================================================
 lm_path = find_file("LayoutManagerChromePhone.java")
-with open(lm_path, "r", encoding="utf-8") as f:
-    lm_c = f.read()
 
-if "mStackLayout;" not in lm_c:
-    lm_c = lm_c.replace(
-        "private Layout mNewTabAnimationLayout;",
-        "private Layout mNewTabAnimationLayout;\n    private @Nullable org.chromium.chrome.browser.compositor.layouts.phone.StackLayout mStackLayout;"
-    )
+field_anchor = "private Layout mNewTabAnimationLayout;"
+field_repl = """private Layout mNewTabAnimationLayout;
+    private @Nullable org.chromium.chrome.browser.compositor.layouts.phone.StackLayout mStackLayout;"""
+patch_file(lm_path, field_anchor, field_repl, "LayoutManager field declaration")
 
-if "if (mStackLayout != null) { mStackLayout.destroy(); }" not in lm_c:
-    lm_c = lm_c.replace(
-        "mNewTabAnimationLayout.destroy();",
-        "mNewTabAnimationLayout.destroy();\n        if (mStackLayout != null) { mStackLayout.destroy(); }"
-    )
+destroy_anchor = "mNewTabAnimationLayout.destroy();"
+destroy_repl = """mNewTabAnimationLayout.destroy();
+        if (mStackLayout != null) {
+            mStackLayout.destroy();
+        }"""
+patch_file(lm_path, destroy_anchor, destroy_repl, "LayoutManager destroy hook")
 
 init_anchor = "mNewTabAnimationLayout.setTabContentManager(tabContentManager);"
-stack_init_code = """mNewTabAnimationLayout.setTabContentManager(tabContentManager);
+init_repl = """mNewTabAnimationLayout.setTabContentManager(tabContentManager);
 
+        org.chromium.base.supplier.ObservableSupplierImpl<
+                org.chromium.chrome.browser.browser_controls.BrowserControlsStateProvider>
+                controlsSupplier = new org.chromium.base.supplier.ObservableSupplierImpl<>();
+        controlsSupplier.set(getBrowserControlsManager());
         mStackLayout =
                 new org.chromium.chrome.browser.compositor.layouts.phone.StackLayout(
-                        context,
-                        this,
-                        renderHost,
-                        new org.chromium.base.supplier.ObservableSupplierImpl<
-                                org.chromium.chrome.browser.browser_controls.BrowserControlsStateProvider>(
-                                getBrowserControlsManager()));
+                        context, this, renderHost, controlsSupplier);
         mStackLayout.setTabModelSelector(selector, tabContentManager);"""
+patch_file(lm_path, init_anchor, init_repl, "LayoutManager init instantiation")
 
-if "mStackLayout =" not in lm_c and init_anchor in lm_c:
-    lm_c = lm_c.replace(init_anchor, stack_init_code, 1)
-
-layout_type_anchor = "if (layoutType == LayoutType.SIMPLE_ANIMATION) {\n            return mNewTabAnimationLayout;\n        }"
-stack_routing_code = """if (layoutType == LayoutType.SIMPLE_ANIMATION) {
-            return mNewTabAnimationLayout;
-        }
-        String aeriumMode = org.chromium.base.ContextUtils.getAppSharedPreferences()
-                .getString("aerium_tab_switcher_mode", "0");
-        if (!"0".equals(aeriumMode)) {
-            if (layoutType == LayoutType.TAB_SWITCHER || layoutType == LayoutType.HUB) {
-                if (mStackLayout != null) return mStackLayout;
-            }
-        }"""
-
-if "aerium_tab_switcher_mode" not in lm_c and layout_type_anchor in lm_c:
-    lm_c = lm_c.replace(layout_type_anchor, stack_routing_code, 1)
-
-start_showing_hook = """
-    @Override
+routing_anchor = "    @Override\n    protected Layout getLayoutForType(int layoutType) {"
+routing_repl = """    @Override
     public void startShowing(Layout layout, boolean animate) {
-        String aeriumMode = org.chromium.base.ContextUtils.getAppSharedPreferences()
-                .getString("aerium_tab_switcher_mode", "0");
+        String aeriumMode =
+                org.chromium.base.ContextUtils.getAppSharedPreferences()
+                        .getString("aerium_tab_switcher_mode", "0");
         if (!"0".equals(aeriumMode)) {
-            if (layout != null && (layout.getLayoutType() == LayoutType.TAB_SWITCHER || layout.getLayoutType() == LayoutType.HUB)) {
+            if (layout != null
+                    && (layout.getLayoutType() == LayoutType.TAB_SWITCHER
+                            || layout.getLayoutType() == LayoutType.HUB)) {
                 if (mStackLayout != null) {
                     super.startShowing(mStackLayout, animate);
                     return;
@@ -468,23 +529,26 @@ start_showing_hook = """
         }
         super.startShowing(layout, animate);
     }
-"""
-if "public void startShowing(Layout layout, boolean animate)" not in lm_c:
-    last_brace = lm_c.rfind("}")
-    if last_brace != -1:
-        lm_c = lm_c[:last_brace] + start_showing_hook + "\n}\n"
 
-with open(lm_path, "w", encoding="utf-8") as f:
-    f.write(lm_c)
-print("[aerium] Step 5: LayoutManagerChromePhone.java hooked cleanly")
+    @Override
+    protected Layout getLayoutForType(int layoutType) {
+        if (layoutType == LayoutType.SIMPLE_ANIMATION) {
+            return mNewTabAnimationLayout;
+        }
+        String aeriumMode =
+                org.chromium.base.ContextUtils.getAppSharedPreferences()
+                        .getString("aerium_tab_switcher_mode", "0");
+        if (!"0".equals(aeriumMode)) {
+            if (layoutType == LayoutType.TAB_SWITCHER || layoutType == LayoutType.HUB) {
+                if (mStackLayout != null) return mStackLayout;
+            }
+        }"""
+patch_file(lm_path, routing_anchor, routing_repl, "LayoutManager layout routing hooks")
 
 # ==============================================================================
-# STEP 6: INJECT STRINGS INTO ANDROID_CHROME_STRINGS.GRD
+# STEP 7: INJECT STRINGS INTO ANDROID_CHROME_STRINGS.GRD
 # ==============================================================================
-grd_path = find_file(
-    "android_chrome_strings.grd",
-    path_hint=os.path.join("chrome", "browser", "ui", "android", "strings")
-)
+grd_path = find_file("android_chrome_strings.grd", path_hint=os.path.join("chrome", "browser", "ui", "android", "strings"))
 with open(grd_path, "r", encoding="utf-8") as f:
     grd_c = f.read()
 
@@ -508,15 +572,17 @@ if "IDS_AERIUM_TAB_SWITCHER_LAYOUT_TITLE" not in grd_c:
       </message>
 """
     m = re.search(r"<messages[^>]*>", grd_c)
-    if m:
-        idx = m.end()
-        grd_c = grd_c[:idx] + new_strings + grd_c[idx:]
-        with open(grd_path, "w", encoding="utf-8") as f:
-            f.write(grd_c)
-        print("[aerium] Step 6: Strings injected into android_chrome_strings.grd")
+    if not m:
+        print(f"[FATAL] '<messages>' tag not found in {grd_path}")
+        sys.exit(1)
+    idx = m.end()
+    grd_c = grd_c[:idx] + new_strings + grd_c[idx:]
+    with open(grd_path, "w", encoding="utf-8") as f:
+        f.write(grd_c)
+    print("[aerium] Step 7: Strings injected into android_chrome_strings.grd")
 
 # ==============================================================================
-# STEP 7: PREFERENCE ARRAYS INJECTION
+# STEP 8: PREFERENCE ARRAYS INJECTION (ATOMIC DEDUP & WRITE)
 # ==============================================================================
 primary_res_xml = None
 for candidate in glob.glob("**/chrome/android/java/res/values/values.xml", recursive=True):
@@ -524,14 +590,22 @@ for candidate in glob.glob("**/chrome/android/java/res/values/values.xml", recur
         primary_res_xml = candidate
         break
 
-if primary_res_xml:
-    with open(primary_res_xml, "r", encoding="utf-8") as f:
-        res_c = f.read()
+if not primary_res_xml:
+    print("[FATAL] Could not find primary values.xml")
+    sys.exit(1)
 
-    res_c = re.sub(r'<string-array name="aerium_tab_switcher_entries">[\s\S]*?</string-array>', "", res_c)
-    res_c = re.sub(r'<string-array name="aerium_tab_switcher_values">[\s\S]*?</string-array>', "", res_c)
+with open(primary_res_xml, "r", encoding="utf-8") as f:
+    res_c = f.read()
 
-    arrays_snippet = """
+res_c = re.sub(
+    r'\s*<!-- Aerium Tab Switcher Preference Arrays -->[\s\S]*?<string-array name="aerium_tab_switcher_values">[\s\S]*?</string-array>',
+    "",
+    res_c
+)
+res_c = re.sub(r'\s*<string-array name="aerium_tab_switcher_entries">[\s\S]*?</string-array>', "", res_c)
+res_c = re.sub(r'\s*<string-array name="aerium_tab_switcher_values">[\s\S]*?</string-array>', "", res_c)
+
+arrays_snippet = """
     <!-- Aerium Tab Switcher Preference Arrays -->
     <string-array name="aerium_tab_switcher_entries">
         <item>@string/aerium_tab_switcher_grid</item>
@@ -544,21 +618,28 @@ if primary_res_xml:
         <item>2</item>
     </string-array>
 """
-    res_c = res_c.replace("</resources>", arrays_snippet + "\n</resources>", 1)
-    with open(primary_res_xml, "w", encoding="utf-8") as f:
-        f.write(res_c)
-    print(f"[aerium] Step 7: Preference arrays injected into {primary_res_xml}")
+if "</resources>" not in res_c:
+    print(f"[FATAL] '</resources>' closing tag not found in {primary_res_xml}")
+    sys.exit(1)
+
+res_c = res_c.replace("</resources>", arrays_snippet + "\n</resources>", 1)
+with open(primary_res_xml, "w", encoding="utf-8") as f:
+    f.write(res_c)
+print(f"[aerium] Step 8: Preference arrays injected atomically into {primary_res_xml}")
 
 # ==============================================================================
-# STEP 8: SETTINGS XML INJECTION
+# STEP 9: SETTINGS XML INJECTION (ATOMIC DEDUP & NAMESPACE WRITE)
 # ==============================================================================
 settings_path = find_file("tabs_settings.xml", path_hint=os.path.join("res", "xml"))
 with open(settings_path, "r", encoding="utf-8") as f:
     set_c = f.read()
 
-set_c = re.sub(r'<ListPreference[^>]*android:key="aerium_tab_switcher_mode"[\s\S]*?/>', "", set_c)
+set_c = re.sub(r'<ListPreference[^>]*android:key="aerium_tab_switcher_mode"[\s\S]*?/>\s*', "", set_c)
 
 if 'xmlns:app="http://schemas.android.com/apk/res-auto"' not in set_c:
+    if "<PreferenceScreen" not in set_c:
+        print(f"[FATAL] '<PreferenceScreen' not found in {settings_path}")
+        sys.exit(1)
     set_c = set_c.replace("<PreferenceScreen", '<PreferenceScreen xmlns:app="http://schemas.android.com/apk/res-auto"', 1)
 
 pref_item = """
@@ -572,14 +653,17 @@ pref_item = """
         app:useSimpleSummaryProvider="true" />
 """
 
-if "</PreferenceScreen>" in set_c:
-    set_c = set_c.replace("</PreferenceScreen>", pref_item + "\n</PreferenceScreen>", 1)
-    with open(settings_path, "w", encoding="utf-8") as f:
-        f.write(set_c)
-    print("[aerium] Step 8: Injected ListPreference into tabs_settings.xml")
+if "</PreferenceScreen>" not in set_c:
+    print(f"[FATAL] '</PreferenceScreen>' not found in {settings_path}")
+    sys.exit(1)
+
+set_c = set_c.replace("</PreferenceScreen>", pref_item + "\n</PreferenceScreen>", 1)
+with open(settings_path, "w", encoding="utf-8") as f:
+    f.write(set_c)
+print(f"[aerium] Step 9: Injected ListPreference atomically into {settings_path}")
 
 # ==============================================================================
-# STEP 9: HOOK PREFERENCE LISTENER IN TABSSETTINGS.JAVA
+# STEP 10: HOOK PREFERENCE LISTENER IN TABSSETTINGS.JAVA
 # ==============================================================================
 tabs_settings_java = find_file("TabsSettings.java", path_hint=os.path.join("tasks", "tab_management"))
 with open(tabs_settings_java, "r", encoding="utf-8") as f:
@@ -601,14 +685,14 @@ if "aerium_tab_switcher_mode" not in ts_c:
         }
 """
     pattern_create = r"(void\s+onCreatePreferences\s*\([^)]*\)\s*\{[\s\S]*?setPreferencesFromResource\([^)]*\);)"
-    if re.search(pattern_create, ts_c):
-        ts_c = re.sub(pattern_create, r"\1" + sync_code, ts_c, count=1)
-        with open(tabs_settings_java, "w", encoding="utf-8") as f:
-            f.write(ts_c)
-        print("[aerium] Step 9: Hooked preference listener in TabsSettings.java")
+    match = re.search(pattern_create, ts_c)
+    if not match:
+        print(f"[FATAL] Could not find onCreatePreferences/setPreferencesFromResource anchor in {tabs_settings_java}")
+        sys.exit(1)
+    patch_file(tabs_settings_java, match.group(0), match.group(0) + sync_code, "TabsSettings.java preference listener hook")
 
 # ==============================================================================
-# STEP 10: TABUIFEATUREUTILITIES.JAVA HELPER
+# STEP 11: TABUIFEATUREUTILITIES.JAVA HELPER
 # ==============================================================================
 util_path = find_file("TabUiFeatureUtilities.java", path_hint=os.path.join("tasks", "tab_management"))
 with open(util_path, "r", encoding="utf-8") as f:
@@ -636,11 +720,14 @@ if "getAeriumTabSwitcherMode" not in u_c:
         return getAeriumTabSwitcherMode() == 2;
     }
 """
-    idx = u_c.rfind("}")
-    if idx != -1:
-        u_c = u_c[:idx] + "\n" + methods + "\n}\n"
-        with open(util_path, "w", encoding="utf-8") as f:
-            f.write(u_c)
-        print("[aerium] Step 10: TabUiFeatureUtilities patched with mode helpers")
+    closing_anchor = "\n}"
+    idx = u_c.rfind(closing_anchor)
+    if idx == -1:
+        print(f"[FATAL] Closing anchor not found in {util_path}")
+        sys.exit(1)
+    u_c = u_c[:idx] + "\n" + methods + closing_anchor
+    with open(util_path, "w", encoding="utf-8") as f:
+        f.write(u_c)
+    print("[aerium] Step 11: TabUiFeatureUtilities patched with mode helpers")
 
-print("[aerium] Verified classic stack patch completed with zero errors.")
+print("\n[aerium] All steps verified and completed cleanly.")
