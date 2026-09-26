@@ -202,19 +202,59 @@ if methods_to_inject or fields_code:
     lt_c = lt_c[:idx] + addition + lt_c[idx:]
     print(f"[aerium] Injected {len(methods_to_inject)} methods into LayoutTab.java")
 
+# Ensure BOUNDS & CLOSE_PLACEMENT are initialized to prevent runtime NPE
+if "set(BOUNDS, new android.graphics.RectF());" not in lt_c:
+    ctor_body_match = re.search(r"(public\s+LayoutTab\s*\([^{]*\{)", lt_c)
+    if not ctor_body_match:
+        print(f"[FATAL] Could not find 'public LayoutTab(' constructor body to initialize BOUNDS/CLOSE_PLACEMENT in {lt_path}")
+        sys.exit(1)
+
+    idx = ctor_body_match.end()
+    lt_c = (
+        lt_c[:idx]
+        + "\n        set(BOUNDS, new android.graphics.RectF());"
+        + "\n        set(CLOSE_PLACEMENT, new android.graphics.RectF());"
+        + lt_c[idx:]
+    )
+    print("[aerium] Injected default BOUNDS & CLOSE_PLACEMENT initialization into LayoutTab constructor")
+
 with open(lt_path, "w", encoding="utf-8") as f:
     f.write(lt_c)
 print("[aerium] Step 1: LayoutTab.java successfully updated")
 
 # ==============================================================================
-# STEP 2: INJECT SHOW_CLOSE_BUTTON IN Layout.java
+# STEP 2: INJECT SHOW_CLOSE_BUTTON IN Layout.java & PARSE VALID METHODS
 # ==============================================================================
 l_path = find_file("Layout.java", path_hint=os.path.join("compositor", "layouts"))
+with open(l_path, "r", encoding="utf-8") as f:
+    l_c = f.read()
+
+# Clean up obsolete releaseTabLayout stub from prior patch runs if present
+if "releaseTabLayout(org.chromium.chrome.browser.compositor.layouts.components.LayoutTab tab)" in l_c:
+    l_c = re.sub(
+        r'public\s+void\s+releaseTabLayout\(org\.chromium\.chrome\.browser\.compositor\.layouts\.components\.LayoutTab\s+tab\)\s*\{\}\s*',
+        '',
+        l_c
+    )
+    with open(l_path, "w", encoding="utf-8") as f:
+        f.write(l_c)
+    print("[aerium] Cleaned up obsolete releaseTabLayout stub from Layout.java")
+
 layout_anchor = "public LayoutTab createLayoutTab(int id, boolean isIncognito) {"
 layout_replacement = """public static final boolean SHOW_CLOSE_BUTTON = true;
 
     public LayoutTab createLayoutTab(int id, boolean isIncognito) {"""
 patch_file(l_path, layout_anchor, layout_replacement, "Layout.java SHOW_CLOSE_BUTTON")
+
+# Extract all valid method names from Layout.java to dynamically filter overrides
+with open(l_path, "r", encoding="utf-8") as f:
+    layout_code = f.read()
+
+valid_layout_methods = set(re.findall(r'(?:public|protected)\s+[^(\n]+\s+(\w+)\s*\(', layout_code))
+valid_layout_methods.update([
+    "equals", "hashCode", "toString", "clone", "finalize",
+    "getLayoutType", "getEventFilter", "getSceneLayer", "destroy"
+])
 
 # ==============================================================================
 # STEP 3: DEPLOY & PRECISELY SANITIZE M88 JAVA SOURCES
@@ -243,6 +283,16 @@ KNOWN_DELETED_RESOURCES = [
     "R.dimen.tabswitcher_border_frame_padding_left", "R.dimen.compositor_button_slop",
     "R.dimen.even_out_scrolling", "R.dimen.min_spacing", "R.dimen.open_new_tab_animation_y_translation",
 ]
+
+def strip_invalid_overrides(java_code, valid_methods):
+    def repl(m):
+        override_anno = m.group(1)
+        method_name = m.group(2)
+        if method_name not in valid_methods:
+            return m.group(0).replace(override_anno, "")
+        return m.group(0)
+    pattern = r'(@Override\s+)(?:public|protected|private)\s+[^(\n]+\s+(\w+)\s*\('
+    return re.sub(pattern, repl, java_code)
 
 for filename, target_dir in file_mappings.items():
     src_file = os.path.join(patch_dir, filename)
@@ -274,7 +324,6 @@ for filename, target_dir in file_mappings.items():
     content = content.replace("CachedFeatureFlags.isEnabled(ChromeFeatureList.HORIZONTAL_TAB_SWITCHER_ANDROID)", "false")
     content = content.replace("ChromeFeatureList.isEnabled(ChromeFeatureList.HORIZONTAL_TAB_SWITCHER_ANDROID)", "false")
 
-    # File specific patches
     if filename == "StackLayoutBase.java":
         if "import android.os.SystemClock;" not in content:
             content = "import android.os.SystemClock;\n" + content
@@ -285,31 +334,65 @@ for filename, target_dir in file_mappings.items():
 
         # Direct BrowserControlsStateProvider observer attachment
         content = re.sub(r'import\s+org\.chromium\.base\.supplier\.ObservableSupplier;[\r\n]+', '', content)
-        content = re.sub(r'private\s+final\s+ObservableSupplier<BrowserControlsStateProvider>\s+mBrowserControlsSupplier;[\r\n]+', 'private final BrowserControlsStateProvider mBrowserControlsSupplier;\n', content)
+        content = re.sub(
+            r'private\s+final\s+ObservableSupplier<BrowserControlsStateProvider>\s+mBrowserControlsSupplier;[\r\n]+',
+            'private final BrowserControlsStateProvider mBrowserControlsSupplier;\n',
+            content
+        )
         content = re.sub(r'private\s+final\s+Callback<BrowserControlsStateProvider>\s+mBrowserControlsSupplierObserver;[\r\n]+', '', content)
         content = content.replace("ObservableSupplier<BrowserControlsStateProvider>", "BrowserControlsStateProvider")
         content = content.replace("browserControlsStateProviderSupplier.get()", "browserControlsStateProviderSupplier")
         content = content.replace("mBrowserControlsSupplier.get()", "mBrowserControlsSupplier")
         content = content.replace("mBrowserControlsSupplier.hasValue()", "(mBrowserControlsSupplier != null)")
 
-        # Replace supplier callback hook with direct observer attachment
+        # Hook observer directly in constructor with hard-stop assertion
         obs_pattern = r'mBrowserControlsSupplierObserver\s*=\s*\([^)]*\)\s*->[^;]+;[\s\S]*?mBrowserControlsSupplier\.addObserver\(mBrowserControlsSupplierObserver\);'
-        content = re.sub(obs_pattern, 'mBrowserControlsSupplier.addObserver(mBrowserControlsObserver);', content)
+        content, count = re.subn(obs_pattern, 'mBrowserControlsSupplier.addObserver(mBrowserControlsObserver);', content, count=1)
+        if count == 0 and "mBrowserControlsSupplier.addObserver(mBrowserControlsObserver);" not in content:
+            print(f"[FATAL] Failed to hook mBrowserControlsObserver in {filename}")
+            sys.exit(1)
 
-        # Replace destroy cleanup
-        destroy_clean = """if (mBrowserControlsSupplier != null) {
+        # Cleanly replace the destroy() method with hard-stop assertion
+        destroy_clean = """    @Override
+    public void destroy() {
+        if (mBrowserControlsSupplier != null) {
             mBrowserControlsSupplier.removeObserver(mBrowserControlsObserver);
-        }"""
-        content = re.sub(r'if\s*\(mBrowserControlsSupplier\s*!=\s*null\)\s*\{[\s\S]*?mBrowserControlsSupplier\.removeObserver\(mBrowserControlsSupplierObserver\);[\s\S]*?\}', destroy_clean, content)
+        }
+        super.destroy();
+    }"""
+        content, count = re.subn(r'@Override\s+public\s+void\s+destroy\(\)\s*\{[\s\S]*?super\.destroy\(\);\s*\}', destroy_clean, content, count=1)
+        if count == 0 and "mBrowserControlsSupplier.removeObserver(mBrowserControlsObserver);" not in content:
+            print(f"[FATAL] Failed to rewrite destroy() method in {filename}")
+            sys.exit(1)
 
-        # Fix startHiding and field mNextTabId
+        # Class declaration injection (tolerates both abstract and non-abstract class headers)
         if "protected int mNextTabId" not in content:
-            content = re.sub(r'(public\s+abstract\s+class\s+StackLayoutBase[^{]*\{)', r'\1\n    protected int mNextTabId = org.chromium.chrome.browser.tab.Tab.INVALID_TAB_ID;\n', content)
+            content, count = re.subn(
+                r'(public\s+(?:abstract\s+)?class\s+StackLayoutBase[^{]*\{)',
+                r'\1\n    protected int mNextTabId = org.chromium.chrome.browser.tab.Tab.INVALID_TAB_ID;\n',
+                content,
+                count=1
+            )
+            if count == 0:
+                print(f"[FATAL] Failed to inject mNextTabId field into class header of {filename}")
+                sys.exit(1)
 
-        content = re.sub(r'@Override\s+public\s+void\s+startHiding\(int\s+nextTabId,\s*boolean\s+hintAtTabSelection\)\s*\{[\s\S]*?super\.startHiding\(nextTabId,\s*hintAtTabSelection\);',
-                         'public void startHiding(int nextTabId, boolean hintAtTabSelection) {\n        mNextTabId = nextTabId;\n        super.startHiding();', content)
+        # Fix startHiding signature and body
+        content = re.sub(
+            r'@Override\s+public\s+void\s+startHiding\s*\(\s*int\s+nextTabId,\s*boolean\s+hintAtTabSelection\s*\)',
+            'public void startHiding(int nextTabId, boolean hintAtTabSelection)',
+            content
+        )
+        if "super.startHiding(nextTabId, hintAtTabSelection);" in content:
+            content = content.replace(
+                "super.startHiding(nextTabId, hintAtTabSelection);",
+                "mNextTabId = nextTabId;\n        super.startHiding();"
+            )
+        elif "super.startHiding();" not in content:
+            print(f"[FATAL] Failed to patch startHiding() super call in {filename}")
+            sys.exit(1)
 
-        # Tab closure modernisation
+        # Tab closure modernization
         content = content.replace(
             "TabModelUtils.closeTabById(mTabModelSelector.getModel(incognito), id, canUndo);",
             """{
@@ -325,30 +408,40 @@ for filename, target_dir in file_mappings.items():
             "mTabModelSelector.getModel(incognito).getTabRemover().closeTabs(TabClosureParams.closeAllTabs().allowUndo(false).build(), false);"
         )
 
-        # Replace getCurrentModelIndex
         content = content.replace("mTabModelSelector.getCurrentModelIndex()", "(mTabModelSelector.isIncognitoSelected() ? 1 : 0)")
-
-        # Replace non-static HomepageManager call
         content = content.replace("HomepageManager.shouldCloseAppWithZeroTabs()", "HomepageManager.getInstance().shouldCloseAppWithZeroTabs()")
 
-        # Fix setTabModelSelector super call & remove invalid overrides
-        content = re.sub(r'@Override\s+public\s+void\s+setTabModelSelector\(TabModelSelector\s+modelSelector,\s*TabContentManager\s+manager\)\s*\{[\s\S]*?super\.setTabModelSelector\(modelSelector,\s*manager\);',
-                         'public void setTabModelSelector(TabModelSelector modelSelector, TabContentManager manager) {\n        super.setTabModelSelector(modelSelector);\n        setTabContentManager(manager);', content)
+        # Fix setTabModelSelector super call
+        content = re.sub(
+            r'@Override\s+public\s+void\s+setTabModelSelector\s*\(\s*TabModelSelector\s+modelSelector,\s*TabContentManager\s+manager\s*\)',
+            'public void setTabModelSelector(TabModelSelector modelSelector, TabContentManager manager)',
+            content
+        )
+        if "super.setTabModelSelector(modelSelector, manager);" in content:
+            content = content.replace(
+                "super.setTabModelSelector(modelSelector, manager);",
+                "super.setTabModelSelector(modelSelector);\n        setTabContentManager(manager);"
+            )
+        elif "setTabContentManager(manager);" not in content:
+            print(f"[FATAL] Failed to patch setTabModelSelector() in {filename}")
+            sys.exit(1)
 
-        content = re.sub(r'@Override\s+public\s+void\s+onTabSelecting\([^\)]*\)\s*\{[\s\S]*?super\.onTabSelecting\([^\)]*\);',
-                         'public void onTabSelecting(long time, int tabId) {', content)
-        content = re.sub(r'@Override\s+public\s+void\s+onTabRestored\([^\)]*\)\s*\{[\s\S]*?super\.onTabRestored\([^\)]*\);',
-                         'public void onTabRestored(long time, int tabId) {', content)
-
-        # Remove dead debug rect
+        # Strip obsolete super tab callbacks and dead debug rect
+        content = re.sub(r'super\.onTab\w+\([^\)]*\);\s*', '', content)
         content = re.sub(r'mRenderHost\.pushDebugRect\([^\)]*\);', '', content)
+
+        # Dynamic strip of any invalid @Override
+        content = strip_invalid_overrides(content, valid_layout_methods)
 
         # Scene layer push
         push_pattern = r"mSceneLayer\.pushLayers\s*\([^;]+?\);"
         push_replacement = """mSceneLayer.pushLayers(getContext(), viewport, contentViewport, this,
                 tabContentManager, resourceManager, browserControls,
                 SceneLayer.INVALID_RESOURCE_ID, 0, 0);"""
-        content, _ = re.subn(push_pattern, push_replacement, content, count=1)
+        content, count = re.subn(push_pattern, push_replacement, content, count=1)
+        if count == 0 and "SceneLayer.INVALID_RESOURCE_ID" not in content:
+            print(f"[FATAL] Could not find mSceneLayer.pushLayers call site in {filename}")
+            sys.exit(1)
 
     elif filename == "StackLayout.java":
         if "import org.chromium.chrome.browser.layouts.LayoutType;" not in content:
@@ -358,10 +451,12 @@ for filename, target_dir in file_mappings.items():
 
         # Implement abstract getLayoutType()
         if "public @LayoutType int getLayoutType()" not in content:
-            content = re.sub(r'(public\s+class\s+StackLayout\s+extends\s+StackLayoutBase\s*\{)',
-                             r'\1\n    @Override\n    public @LayoutType int getLayoutType() {\n        return LayoutType.HUB;\n    }\n', content)
+            content = re.sub(
+                r'(public\s+class\s+StackLayout\s+extends\s+StackLayoutBase\s*\{)',
+                r'\1\n    @Override\n    public @LayoutType int getLayoutType() {\n        return LayoutType.HUB;\n    }\n',
+                content
+            )
 
-        # Fix model filter provider removed
         content = content.replace(
             "if (modelSelector.getTabModelFilterProvider().getCurrentTabModelFilter() == null) {",
             "if (modelSelector.getCurrentModel() == null) {"
@@ -380,8 +475,8 @@ for filename, target_dir in file_mappings.items():
             "mTabModelSelector.getModel(true).getTabById(tabId)"
         )
 
-        content = re.sub(r'@Override\s+public\s+void\s+onTabsAllClosing\([^\)]*\)\s*\{[\s\S]*?super\.onTabsAllClosing\([^\)]*\);',
-                         'public void onTabsAllClosing(long time, boolean incognito) {', content)
+        content = re.sub(r'super\.onTabsAllClosing\([^\)]*\);\s*', '', content)
+        content = strip_invalid_overrides(content, valid_layout_methods)
 
     elif filename == "Stack.java":
         content = content.replace("!mLayout.isHiding()", "!mLayout.isStartingToHide()")
@@ -389,7 +484,6 @@ for filename, target_dir in file_mappings.items():
         create_replacement = "mLayout.createLayoutTab(tabId, isIncognito);"
         content, _ = re.subn(create_pattern, create_replacement, content, count=1)
 
-        # TabList helpers
         tab_list_helpers = """
     private int getTabIndexInList(TabList list, int id) {
         if (list == null) return TabList.INVALID_TAB_INDEX;
@@ -417,6 +511,7 @@ for filename, target_dir in file_mappings.items():
 
     elif filename == "StackViewAnimation.java":
         content = content.replace("TabThemeColorHelper.getBackgroundColor(tab)", "tab.getThemeColor()")
+        content = re.sub(r'import\s+org\.chromium\.chrome\.browser\.tab\.TabThemeColorHelper;[\r\n]+', '', content)
 
     elif filename == "OverlappingStack.java":
         content = content.replace("TabUiFeatureUtilities.isConditionalTabStripEnabled()", "false")
@@ -690,6 +785,18 @@ if "new org.chromium.chrome.browser.compositor.layouts.phone.StackLayout(" not i
     )
     lm_c = lm_c.replace(init_anchor, init_repl, 1)
 
+# Clean up obsolete LayoutType.TAB_SWITCHER from earlier runs if present
+if "LayoutType.TAB_SWITCHER" in lm_c:
+    lm_c = lm_c.replace(
+        "layout.getLayoutType() == LayoutType.TAB_SWITCHER || layout.getLayoutType() == LayoutType.HUB",
+        "layout.getLayoutType() == LayoutType.HUB"
+    )
+    lm_c = lm_c.replace(
+        "layoutType == LayoutType.TAB_SWITCHER || layoutType == LayoutType.HUB",
+        "layoutType == LayoutType.HUB"
+    )
+    lm_c = lm_c.replace("LayoutType.TAB_SWITCHER", "LayoutType.HUB")
+
 if 'aeriumMode' not in lm_c:
     routing_match = re.search(r"@Override\s+protected\s+Layout\s+getLayoutForType\s*\(\s*int\s+layoutType\s*\)\s*\{", lm_c)
     if not routing_match:
@@ -932,8 +1039,8 @@ tlc_path = find_file("TabListCoordinator.java", path_hint=os.path.join("tasks", 
 with open(tlc_path, "r", encoding="utf-8") as f:
     tlc_c = f.read()
 
-if "final Size newDefaultSize" in tlc_c:
-    tlc_c = tlc_c.replace("final Size newDefaultSize", "Size newDefaultSize")
+if re.search(r'\bfinal\s+Size\s+newDefaultSize\b', tlc_c):
+    tlc_c = re.sub(r'\bfinal\s+Size\s+newDefaultSize\b', 'Size newDefaultSize', tlc_c)
     with open(tlc_path, "w", encoding="utf-8") as f:
         f.write(tlc_c)
     print("[aerium] Step 12: Stripped final modifier from newDefaultSize in TabListCoordinator.java")
