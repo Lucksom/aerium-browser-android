@@ -1,4 +1,4 @@
-name: Inspect M153 APIs Part 3
+name: Inspect M153 APIs Part 4
 
 on:
   workflow_dispatch:
@@ -10,7 +10,7 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Inspect Remaining APIs
+      - name: Inspect Final APIs and theme.sh
         run: |
           set +e
           VERSION="153.0.8010.36"
@@ -45,42 +45,43 @@ jobs:
           }
 
           echo "=========================================================="
-          echo "### 1. Locate TabListCoordinator patch in repository ###"
+          echo "### 1. Inspect theme.sh around line 5635 (TabListCoordinator injection) ###"
           echo "=========================================================="
-          grep -rn "TabListCoordinator" . || echo "[NONE] TabListCoordinator not found in workspace"
+          sed -n '5620,5660p' theme.sh | nl -ba -v 5620
 
           echo
           echo "=========================================================="
-          echo "### 2. TabThemeColorHelper.java ###"
+          echo "### 2. TabClosureParams.java (Full Content) ###"
           echo "=========================================================="
-          fetch_raw "chrome/android/java/src/org/chromium/chrome/browser/tab/TabThemeColorHelper.java" "TabThemeColorHelper.java"
-          if [ -s TabThemeColorHelper.java ]; then
-            grep -n -C 4 "getBackgroundColor" TabThemeColorHelper.java
+          fetch_raw "chrome/browser/tabmodel/android/java/src/org/chromium/chrome/browser/tabmodel/TabClosureParams.java" "TabClosureParams.java"
+          if [ -s TabClosureParams.java ]; then
+            grep -n -E "public static|closeTab|closeAllTabs|allowUndo|build" TabClosureParams.java
           fi
 
           echo
           echo "=========================================================="
-          echo "### 3. TabRemover.java (Tab Closure Signatures) ###"
-          echo "=========================================================="
-          fetch_raw "chrome/browser/tabmodel/android/java/src/org/chromium/chrome/browser/tabmodel/TabRemover.java" "TabRemover.java"
-          if [ -s TabRemover.java ]; then
-            nl -ba TabRemover.java
-          fi
-
-          echo
-          echo "=========================================================="
-          echo "### 4. TabList.java (Index & Retrieval Signatures) ###"
+          echo "### 3. TabList.java (Full Interface) ###"
           echo "=========================================================="
           fetch_raw "chrome/browser/tabmodel/android/java/src/org/chromium/chrome/browser/tabmodel/TabList.java" "TabList.java"
           if [ -s TabList.java ]; then
-            grep -n "public" TabList.java
+            nl -ba TabList.java
           fi
 
           echo
           echo "=========================================================="
-          echo "### 5. TabModelSelector.java (Full Interface) ###"
+          echo "### 4. TabThemeColorHelper.java (Full Methods) ###"
           echo "=========================================================="
-          fetch_raw "chrome/browser/tabmodel/android/java/src/org/chromium/chrome/browser/tabmodel/TabModelSelector.java" "TabModelSelector.java"
-          if [ -s TabModelSelector.java ]; then
-            nl -ba TabModelSelector.java
+          fetch_raw "chrome/android/java/src/org/chromium/chrome/browser/tab/TabThemeColorHelper.java" "TabThemeColorHelper.java"
+          if [ -s TabThemeColorHelper.java ]; then
+            grep -n "public static" TabThemeColorHelper.java
+          fi
+
+          echo
+          echo "=========================================================="
+          echo "### 5. Layout.java (Tab Callbacks & NextTabId) ###"
+          echo "=========================================================="
+          fetch_raw "chrome/android/java/src/org/chromium/chrome/browser/compositor/layouts/Layout.java" "Layout.java"
+          if [ -s Layout.java ]; then
+            echo "--- Grep for Tab event hooks in Layout.java ---"
+            grep -n -E "onTab|tabSelected|tabClosing|mNextTabId" Layout.java || echo "[NONE] No legacy tab hooks in Layout.java"
           fi
