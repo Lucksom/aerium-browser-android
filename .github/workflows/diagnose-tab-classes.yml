@@ -1,87 +1,93 @@
-name: Fetch Specific Files Directly
+name: Fetch Chromium Data and Probe Symbols
 
 on:
   workflow_dispatch:
+    inputs:
+      custom_file_path:
+        description: 'Optional file path to fetch from Chromium src (leave empty to skip)'
+        required: false
+        default: ''
 
 jobs:
-  fetch:
+  inspect:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository with submodules
+      - name: Checkout repository
         uses: actions/checkout@v4
         with:
           submodules: true
 
-      - name: Resolve Chromium Version from repository
+      - name: Resolve Chromium Version
         run: |
-          # Dynamically search for args.gn across the repo and submodules
-          ARGS_FILE=$(find . -name "args.gn" | head -n 1)
+          VERSION="153.0.8010.36"
+          ARGS_FILE=$(find . -name "args.gn" 2>/dev/null | head -n 1)
           if [ -n "$ARGS_FILE" ] && [ -f "$ARGS_FILE" ]; then
-            echo "[aerium] Found args file at: $ARGS_FILE"
-            VERSION=$(grep -m1 -o '[0-9]\+\(\.[0-9]\+\)\{3\}' "$ARGS_FILE" || true)
+            DETECTED=$(grep -m1 -o '[0-9]\+\(\.[0-9]\+\)\{3\}' "$ARGS_FILE" || true)
+            [ -n "$DETECTED" ] && VERSION="$DETECTED"
           fi
-
-          if [ -z "$VERSION" ]; then
-            echo "[aerium] Fallback to provided version"
-            VERSION="153.0.8010.36"
-          fi
-
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
-          echo "Target Chromium Version: $VERSION"
+          echo "Target Version: $VERSION"
 
-      - name: Fetch and Dump LayoutManagerChromePhone.java
+      - name: Probe Interpolators.java Location
         run: |
           set +e
-          FILE_PATH="chrome/android/java/src/org/chromium/chrome/browser/compositor/layouts/LayoutManagerChromePhone.java"
-
-          # Candidate URL formats on Google Gitiles
-          URLS=(
-            "https://chromium.googlesource.com/chromium/src/+/refs/tags/${VERSION}/${FILE_PATH}?format=TEXT"
-            "https://chromium.googlesource.com/chromium/src/+/${VERSION}/${FILE_PATH}?format=TEXT"
-            "https://chromium.googlesource.com/chromium/src/+/main/${FILE_PATH}?format=TEXT"
-          )
-
-          FETCHED=0
-          for url in "${URLS[@]}"; do
-            echo "Trying $url ..."
-            HTTP_STATUS=$(curl -sL -w "%{http_code}" -o raw_response.txt "$url")
-            echo "HTTP Status: $HTTP_STATUS"
-
-            if [ "$HTTP_STATUS" -eq 200 ]; then
-              base64 -d raw_response.txt > LayoutManagerChromePhone.java 2>/dev/null
-              if [ -s LayoutManagerChromePhone.java ]; then
-                echo "Successfully fetched and decoded LayoutManagerChromePhone.java!"
-                FETCHED=1
-                break
-              fi
-            fi
-          done
-
-          if [ "$FETCHED" -eq 1 ]; then
-            echo "=========================================================="
-            echo "### LayoutManagerChromePhone.java Content ###"
-            echo "=========================================================="
-            cat LayoutManagerChromePhone.java
-          else
-            echo "[ERROR] Failed to fetch via Gitiles. Response preview:"
-            head -n 20 raw_response.txt
-            echo
-            echo "--- Checking available remote tags for ${VERSION} ---"
-            git ls-remote --tags https://chromium.googlesource.com/chromium/src.git "*${VERSION}*" | head -10
-          fi
-
-      - name: Test Interpolators.java Location
-        run: |
-          set +e
-          LOCATIONS=(
+          echo "=========================================================="
+          echo "### Checking Interpolators.java Location ###"
+          echo "=========================================================="
+          
+          CANDIDATES=(
             "ui/android/java/src/org/chromium/ui/interpolators/Interpolators.java"
             "components/browser_ui/widget/android/java/src/org/chromium/components/browser_ui/widget/animation/Interpolators.java"
+            "third_party/android_deps/libs/androidx_interpolator_interpolator/..."
           )
 
-          for loc in "${LOCATIONS[@]}"; do
-            CODE=$(curl -s -o /dev/null -w "%{http_code}" "https://chromium.googlesource.com/chromium/src/+/refs/tags/${VERSION}/${loc}?format=TEXT")
-            if [ "$CODE" -ne 200 ]; then
-              CODE=$(curl -s -o /dev/null -w "%{http_code}" "https://chromium.googlesource.com/chromium/src/+/${VERSION}/${loc}?format=TEXT")
+          for path in "${CANDIDATES[@]}"; do
+            URL="https://chromium.googlesource.com/chromium/src/+/refs/tags/${VERSION}/${path}?format=TEXT"
+            CODE=$(curl -sL -o /dev/null -w "%{http_code}" "$URL")
+            echo "HTTP $CODE -> $path"
+            if [ "$CODE" -eq 200 ]; then
+              echo ">>> Found at: $path"
+              echo "Package declaration:"
+              curl -sL "$URL" | base64 -d 2>/dev/null | head -n 15 | grep "package "
             fi
-            echo "$loc: HTTP $CODE"
           done
+
+      - name: Probe Native Scene Layer and Title Cache in M153
+        run: |
+          set +e
+          echo "=========================================================="
+          echo "### Probing Scene Layer & Title Cache APIs in M153 ###"
+          echo "=========================================================="
+
+          TARGETS=(
+            "chrome/android/java/src/org/chromium/chrome/browser/compositor/LayerTitleCache.java"
+            "chrome/android/java/src/org/chromium/chrome/browser/compositor/scene_layer/TabStripSceneLayer.java"
+            "chrome/browser/android/compositor/scene_layer/tab_strip_scene_layer.h"
+            "chrome/browser/android/compositor/scene_layer/tab_strip_scene_layer.cc"
+          )
+
+          for path in "${TARGETS[@]}"; do
+            URL="https://chromium.googlesource.com/chromium/src/+/refs/tags/${VERSION}/${path}?format=TEXT"
+            CODE=$(curl -sL -o /dev/null -w "%{http_code}" "$URL")
+            echo "HTTP $CODE -> $path"
+          done
+
+      - name: Fetch Custom Requested File (if provided)
+        if: "${{ github.event.inputs.custom_file_path != '' }}"
+        run: |
+          set +e
+          FILE="${{ github.event.inputs.custom_file_path }}"
+          URL="https://chromium.googlesource.com/chromium/src/+/refs/tags/${VERSION}/${FILE}?format=TEXT"
+          
+          echo "Fetching $URL ..."
+          HTTP_STATUS=$(curl -sL -w "%{http_code}" -o response.txt "$URL")
+          echo "HTTP Status: $HTTP_STATUS"
+
+          if [ "$HTTP_STATUS" -eq 200 ]; then
+            echo "=========================================================="
+            echo "### Content of $FILE ###"
+            echo "=========================================================="
+            base64 -d response.txt
+          else
+            echo "Failed to retrieve $FILE (HTTP $HTTP_STATUS)"
+          fi
