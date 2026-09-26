@@ -1,4 +1,4 @@
-name: Inspect LayoutTab and Layout Symbols
+name: Inspect Specific Files Directly
 
 on:
   workflow_dispatch:
@@ -7,58 +7,72 @@ jobs:
   inspect:
     runs-on: ubuntu-latest
     steps:
-      - name: Sparse Checkout Layouts via Git Protocol
+      - name: Fetch and Inspect Target Files
         run: |
-          set -e
+          set +e
           VERSION="153.0.8010.36"
-          echo "Inspecting Chromium $VERSION layouts..."
 
-          # Git upload-pack protocol is immune to Gitiles 503 web throttling
-          git clone --filter=blob:none --sparse --no-checkout --depth 1 \
-            --branch "$VERSION" \
-            https://chromium.googlesource.com/chromium/src.git chromium-src
+          # Helper function: tries GitHub Raw CDN first, falls back to Gitiles with User-Agent
+          fetch_raw() {
+            local file_path="$1"
+            local out_name="$2"
 
-          cd chromium-src
-          git sparse-checkout set \
-            chrome/android/java/src/org/chromium/chrome/browser/compositor/layouts
+            # 1. GitHub Raw CDN (unthrottled on GitHub Actions, raw plain text)
+            local gh_url="https://raw.githubusercontent.com/chromium/chromium/${VERSION}/${file_path}"
+            local status=$(curl -sL -w "%{http_code}" -o "$out_name" "$gh_url")
+            
+            if [ "$status" -eq 200 ] && [ -s "$out_name" ]; then
+              echo ">>> Fetched $out_name via GitHub Raw"
+              return 0
+            fi
 
-          git checkout "$VERSION"
+            # 2. Gitiles fallback (adds delay and browser User-Agent to bypass 503)
+            sleep 1
+            local gitiles_url="https://chromium.googlesource.com/chromium/src/+/refs/tags/${VERSION}/${file_path}?format=TEXT"
+            status=$(curl -sL -A "Mozilla/5.0" -w "%{http_code}" -o b64.tmp "$gitiles_url")
+            if [ "$status" -eq 200 ]; then
+              base64 -d b64.tmp > "$out_name" 2>/dev/null
+              if [ -s "$out_name" ]; then
+                echo ">>> Fetched $out_name via Gitiles"
+                rm -f b64.tmp
+                return 0
+              fi
+            fi
+
+            echo "[ERROR] Could not fetch $file_path (HTTP $status)"
+            rm -f b64.tmp
+            return 1
+          }
 
           echo "=========================================================="
-          echo "### 1. LayoutTab.java Tilt & Border Properties ###"
+          echo "### 1. Inspecting LayoutTab.java ###"
           echo "=========================================================="
-          LT="chrome/android/java/src/org/chromium/chrome/browser/compositor/layouts/components/LayoutTab.java"
-          if [ -f "$LT" ]; then
-            echo "[FOUND] LayoutTab.java"
-            echo "--- Tilt properties ---"
-            grep -n -E "TILT_X|TILT_Y|setTilt|getTilt" "$LT" || echo "[NONE] Tilt properties missing"
-            echo "--- Border properties ---"
-            grep -n -E "SIDE_BORDER_SCALE|BORDER_CLOSE_BUTTON_ALPHA|BORDER_ALPHA" "$LT" || echo "[NONE] Border properties missing"
-            echo "--- Close button properties ---"
-            grep -n -E "CLOSE_BUTTON_WIDTH_DP|CLOSE_PLACEMENT|CLOSE_BUTTON_IS_ON_RIGHT" "$LT" || echo "[NONE] Close button properties missing"
-          else
-            echo "[ERROR] File not found at expected path: $LT"
+          fetch_raw "chrome/android/java/src/org/chromium/chrome/browser/compositor/layouts/components/LayoutTab.java" "LayoutTab.java"
+          if [ -s LayoutTab.java ]; then
+            echo "--- Tilt Properties ---"
+            grep -n -E "TILT_X|TILT_Y|setTilt|getTilt" LayoutTab.java || echo "[NONE] Tilt properties missing"
+            echo "--- Border Properties ---"
+            grep -n -E "SIDE_BORDER_SCALE|BORDER_CLOSE_BUTTON_ALPHA|BORDER_ALPHA" LayoutTab.java || echo "[NONE] Border properties missing"
+            echo "--- Close Button Properties ---"
+            grep -n -E "CLOSE_BUTTON_WIDTH_DP|CLOSE_PLACEMENT|CLOSE_BUTTON_IS_ON_RIGHT" LayoutTab.java || echo "[NONE] Close button properties missing"
           fi
 
           echo
           echo "=========================================================="
-          echo "### 2. Layout.java createLayoutTab Method ###"
+          echo "### 2. Inspecting Layout.java ###"
           echo "=========================================================="
-          L="chrome/android/java/src/org/chromium/chrome/browser/compositor/layouts/Layout.java"
-          if [ -f "$L" ]; then
-            echo "[FOUND] Layout.java"
-            grep -n -C 4 "createLayoutTab" "$L" || echo "[NONE] createLayoutTab not found in Layout.java"
-            grep -n "SHOW_CLOSE_BUTTON" "$L" || echo "[NONE] SHOW_CLOSE_BUTTON not found in Layout.java"
-          else
-            echo "[ERROR] File not found at expected path: $L"
+          fetch_raw "chrome/android/java/src/org/chromium/chrome/browser/compositor/layouts/Layout.java" "Layout.java"
+          if [ -s Layout.java ]; then
+            echo "--- createLayoutTab & Constants ---"
+            grep -n -C 3 "createLayoutTab" Layout.java || echo "[NONE] createLayoutTab not found in Layout.java"
+            grep -n "SHOW_CLOSE_BUTTON" Layout.java || echo "[NONE] SHOW_CLOSE_BUTTON not found in Layout.java"
           fi
 
           echo
           echo "=========================================================="
-          echo "### 3. LayoutRenderHost.java TitleCache Method ###"
+          echo "### 3. Inspecting LayoutRenderHost.java ###"
           echo "=========================================================="
-          LRH="chrome/android/java/src/org/chromium/chrome/browser/compositor/layouts/LayoutRenderHost.java"
-          if [ -f "$LRH" ]; then
-            echo "[FOUND] LayoutRenderHost.java"
-            grep -n -C 3 "getTitleCache" "$LRH" || echo "[NONE] getTitleCache not in LayoutRenderHost.java"
+          fetch_raw "chrome/android/java/src/org/chromium/chrome/browser/compositor/layouts/LayoutRenderHost.java" "LayoutRenderHost.java"
+          if [ -s LayoutRenderHost.java ]; then
+            grep -n -C 3 "getTitleCache" LayoutRenderHost.java || echo "[NONE] getTitleCache not in LayoutRenderHost.java"
           fi
