@@ -1,4 +1,4 @@
-name: Inspect M153 APIs Part 4
+name: Inspect Final API Details
 
 on:
   workflow_dispatch:
@@ -10,78 +10,31 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Inspect Final APIs and theme.sh
+      - name: Inspect theme.sh and Helper Classes
         run: |
           set +e
           VERSION="153.0.8010.36"
 
-          fetch_raw() {
-            local file_path="$1"
-            local out_name="$2"
-
-            local gh_url="https://raw.githubusercontent.com/chromium/chromium/${VERSION}/${file_path}"
-            local status=$(curl -sL -w "%{http_code}" -o "$out_name" "$gh_url")
-            
-            if [ "$status" -eq 200 ] && [ -s "$out_name" ]; then
-              echo ">>> [SUCCESS] Fetched $out_name"
-              return 0
-            fi
-
-            sleep 1
-            local gitiles_url="https://chromium.googlesource.com/chromium/src/+/refs/tags/${VERSION}/${file_path}?format=TEXT"
-            status=$(curl -sL -A "Mozilla/5.0" -w "%{http_code}" -o b64.tmp "$gitiles_url")
-            if [ "$status" -eq 200 ]; then
-              base64 -d b64.tmp > "$out_name" 2>/dev/null
-              if [ -s "$out_name" ]; then
-                echo ">>> [SUCCESS] Fetched $out_name via Gitiles"
-                rm -f b64.tmp
-                return 0
-              fi
-            fi
-
-            echo "[ERROR] Could not fetch $file_path (HTTP $status)"
-            rm -f b64.tmp
-            return 1
-          }
-
           echo "=========================================================="
-          echo "### 1. Inspect theme.sh around line 5635 (TabListCoordinator injection) ###"
+          echo "### 1. theme.sh lines 5660 to 5720 (TabListCoordinator injection) ###"
           echo "=========================================================="
-          sed -n '5620,5660p' theme.sh | nl -ba -v 5620
+          sed -n '5660,5720p' theme.sh | nl -ba -v 5660
 
           echo
           echo "=========================================================="
-          echo "### 2. TabClosureParams.java (Full Content) ###"
+          echo "### 2. TabThemeColorHelper.java (Full Content) ###"
           echo "=========================================================="
-          fetch_raw "chrome/browser/tabmodel/android/java/src/org/chromium/chrome/browser/tabmodel/TabClosureParams.java" "TabClosureParams.java"
-          if [ -s TabClosureParams.java ]; then
-            grep -n -E "public static|closeTab|closeAllTabs|allowUndo|build" TabClosureParams.java
-          fi
-
-          echo
-          echo "=========================================================="
-          echo "### 3. TabList.java (Full Interface) ###"
-          echo "=========================================================="
-          fetch_raw "chrome/browser/tabmodel/android/java/src/org/chromium/chrome/browser/tabmodel/TabList.java" "TabList.java"
-          if [ -s TabList.java ]; then
-            nl -ba TabList.java
-          fi
-
-          echo
-          echo "=========================================================="
-          echo "### 4. TabThemeColorHelper.java (Full Methods) ###"
-          echo "=========================================================="
-          fetch_raw "chrome/android/java/src/org/chromium/chrome/browser/tab/TabThemeColorHelper.java" "TabThemeColorHelper.java"
+          curl -sL "https://raw.githubusercontent.com/chromium/chromium/${VERSION}/chrome/android/java/src/org/chromium/chrome/browser/tab/TabThemeColorHelper.java" -o TabThemeColorHelper.java
           if [ -s TabThemeColorHelper.java ]; then
-            grep -n "public static" TabThemeColorHelper.java
+            nl -ba TabThemeColorHelper.java
+          else
+            echo "[ERROR] Could not fetch TabThemeColorHelper.java"
           fi
 
           echo
           echo "=========================================================="
-          echo "### 5. Layout.java (Tab Callbacks & NextTabId) ###"
+          echo "### 3. StackLayoutBase.java observer lines (patches/classic_stack) ###"
           echo "=========================================================="
-          fetch_raw "chrome/android/java/src/org/chromium/chrome/browser/compositor/layouts/Layout.java" "Layout.java"
-          if [ -s Layout.java ]; then
-            echo "--- Grep for Tab event hooks in Layout.java ---"
-            grep -n -E "onTab|tabSelected|tabClosing|mNextTabId" Layout.java || echo "[NONE] No legacy tab hooks in Layout.java"
+          if [ -f patches/classic_stack/StackLayoutBase.java ]; then
+            sed -n '415,465p' patches/classic_stack/StackLayoutBase.java | nl -ba -v 415
           fi
