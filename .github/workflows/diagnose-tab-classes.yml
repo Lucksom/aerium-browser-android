@@ -7,12 +7,9 @@ jobs:
   fetch:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repo (to read vanadium/args.gn)
-        uses: actions/checkout@v4
-
-      - name: Resolve Chromium Version
+      - name: Set Chromium Version
         run: |
-          VERSION=$(grep -m1 -o '[0-9]\+\(\.[0-9]\+\)\{3\}' vanadium/args.gn)
+          VERSION="153.0.8010.36"
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
           echo "Target Chromium Version: $VERSION"
 
@@ -21,7 +18,7 @@ jobs:
           set -e
           URL="https://chromium.googlesource.com/chromium/src/+/${VERSION}/chrome/android/java/src/org/chromium/chrome/browser/compositor/layouts/LayoutManagerChromePhone.java?format=TEXT"
           
-          echo "Fetching LayoutManagerChromePhone.java from $URL..."
+          echo "Fetching from $URL..."
           curl -sL "$URL" | base64 -d > LayoutManagerChromePhone.java
 
           echo "=========================================================="
