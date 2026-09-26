@@ -542,7 +542,13 @@ for entry in m88_entries:
 patch_file(gni_path, anchor, anchor + new_entries, "chrome_java_sources.gni registration")
 
 # 2. Add //base:supplier_java to chrome_java deps in chrome/android/BUILD.gn
-build_gn_path = find_file("BUILD.gn", path_hint=os.path.join("chrome", "android"))
+build_gn_path = os.path.join(src_root, "chrome", "android", "BUILD.gn")
+if not os.path.isfile(build_gn_path):
+    for candidate in glob.glob("**/chrome/android/BUILD.gn", recursive=True):
+        if not candidate.startswith("out") and "third_party" not in candidate:
+            build_gn_path = os.path.abspath(candidate)
+            break
+
 with open(build_gn_path, "r", encoding="utf-8") as f:
     bgn_c = f.read()
 
@@ -561,7 +567,6 @@ if match:
 else:
     print("[FATAL] Could not locate android_library(\"chrome_java\") deps block in chrome/android/BUILD.gn")
     sys.exit(1)
-
 
 
 # ==============================================================================
