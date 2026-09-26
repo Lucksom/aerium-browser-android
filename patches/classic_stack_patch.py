@@ -325,10 +325,17 @@ for filename, target_dir in file_mappings.items():
     content = content.replace("ChromeFeatureList.isEnabled(ChromeFeatureList.HORIZONTAL_TAB_SWITCHER_ANDROID)", "false")
 
     if filename == "StackLayoutBase.java":
+        # Insert imports strictly after package declaration
         if "import android.os.SystemClock;" not in content:
-            content = "import android.os.SystemClock;\n" + content
+            content, count = re.subn(r'(package\s+[^;]+;[\r\n]+)', r'\1import android.os.SystemClock;\n', content, count=1)
+            if count == 0:
+                print(f"[FATAL] Failed to insert SystemClock import after package in {filename}")
+                sys.exit(1)
         if "import org.chromium.chrome.browser.tabmodel.TabClosureParams;" not in content:
-            content = "import org.chromium.chrome.browser.tabmodel.TabClosureParams;\n" + content
+            content, count = re.subn(r'(package\s+[^;]+;[\r\n]+)', r'\1import org.chromium.chrome.browser.tabmodel.TabClosureParams;\n', content, count=1)
+            if count == 0:
+                print(f"[FATAL] Failed to insert TabClosureParams import after package in {filename}")
+                sys.exit(1)
 
         content = content.replace("LayoutManager.time()", "SystemClock.uptimeMillis()")
 
@@ -444,18 +451,27 @@ for filename, target_dir in file_mappings.items():
             sys.exit(1)
 
     elif filename == "StackLayout.java":
+        # Insert import strictly after package declaration
         if "import org.chromium.chrome.browser.layouts.LayoutType;" not in content:
-            content = "import org.chromium.chrome.browser.layouts.LayoutType;\n" + content
+            content, count = re.subn(r'(package\s+[^;]+;[\r\n]+)', r'\1import org.chromium.chrome.browser.layouts.LayoutType;\n', content, count=1)
+            if count == 0:
+                print(f"[FATAL] Failed to insert LayoutType import after package in {filename}")
+                sys.exit(1)
+
         content = re.sub(r'import\s+org\.chromium\.base\.supplier\.ObservableSupplier;[\r\n]+', '', content)
         content = content.replace("ObservableSupplier<BrowserControlsStateProvider>", "BrowserControlsStateProvider")
 
         # Implement abstract getLayoutType()
         if "public @LayoutType int getLayoutType()" not in content:
-            content = re.sub(
+            content, count = re.subn(
                 r'(public\s+class\s+StackLayout\s+extends\s+StackLayoutBase\s*\{)',
                 r'\1\n    @Override\n    public @LayoutType int getLayoutType() {\n        return LayoutType.HUB;\n    }\n',
-                content
+                content,
+                count=1
             )
+            if count == 0:
+                print(f"[FATAL] Failed to inject getLayoutType() in {filename}")
+                sys.exit(1)
 
         content = content.replace(
             "if (modelSelector.getTabModelFilterProvider().getCurrentTabModelFilter() == null) {",
@@ -504,7 +520,10 @@ for filename, target_dir in file_mappings.items():
     }
 """
         if "getTabIndexInList" not in content:
-            content = re.sub(r'(public\s+class\s+Stack\s*\{)', r'\1' + tab_list_helpers, content)
+            content, count = re.subn(r'(public\s+class\s+Stack\s*\{)', r'\1' + tab_list_helpers, content, count=1)
+            if count == 0:
+                print(f"[FATAL] Failed to inject tab_list_helpers into class header of {filename}")
+                sys.exit(1)
 
         content = content.replace("TabModelUtils.getTabIndexById(mTabList, id)", "getTabIndexInList(mTabList, id)")
         content = content.replace("TabModelUtils.getTabById(mTabList, id)", "getTabFromList(mTabList, id)")
@@ -541,6 +560,8 @@ for filename, target_dir in file_mappings.items():
     with open(dest_file, "w", encoding="utf-8") as f:
         f.write(content)
     print(f"[aerium] Deployed: {filename} -> {dest_file}")
+
+
 
 # ==============================================================================
 # STEP 4: DEPLOY AUTHENTIC NonOverlappingStack.java
