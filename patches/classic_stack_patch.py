@@ -210,8 +210,6 @@ with open(lt_path, "w", encoding="utf-8") as f:
     f.write(lt_c)
 print("[aerium] Step 1: LayoutTab.java successfully updated")
 
-    
-
 # ==============================================================================
 # STEP 2: INJECT releaseTabLayout & SHOW_CLOSE_BUTTON IN Layout.java
 # ==============================================================================
@@ -242,7 +240,6 @@ file_mappings = {
     "StackViewAnimation.java": dest_layouts_stack,
 }
 
-# Targeted denylist: only verified deleted M88 resources
 KNOWN_DELETED_RESOURCES = [
     "R.dimen.stacked_tab_visible_size",
     "R.dimen.stack_buffer_width",
@@ -270,7 +267,6 @@ for filename, target_dir in file_mappings.items():
     with open(src_file, "r", encoding="utf-8") as f:
         content = f.read()
 
-    # Mechanical M153 import updates
     content = content.replace(
         "import org.chromium.chrome.browser.compositor.layouts.eventfilter.ScrollDirection;",
         "import org.chromium.components.browser_ui.widget.gesture.SwipeGestureListener.ScrollDirection;"
@@ -288,11 +284,17 @@ for filename, target_dir in file_mappings.items():
         "Interpolators.FAST_OUT_SLOW_IN_INTERPOLATOR"
     )
 
-    # Scoped file-specific modifications
     if filename == "StackLayoutBase.java":
         if "import android.os.SystemClock;" not in content:
             content = "import android.os.SystemClock;\n" + content
         content = content.replace("LayoutManager.time()", "SystemClock.uptimeMillis()")
+
+        # Strip ObservableSupplier dependency to avoid //base:supplier_java GN requirement
+        content = re.sub(r'import\s+org\.chromium\.base\.supplier\.ObservableSupplier;[\r\n]+', '', content)
+        content = content.replace("ObservableSupplier<BrowserControlsStateProvider>", "BrowserControlsStateProvider")
+        content = content.replace("mBrowserControlsSupplier.get()", "mBrowserControlsSupplier")
+        content = content.replace("browserControlsStateProviderSupplier.get()", "browserControlsStateProviderSupplier")
+        content = content.replace("mBrowserControlsSupplier.hasValue()", "(mBrowserControlsSupplier != null)")
 
         push_pattern = r"mSceneLayer\.pushLayers\s*\([^;]+?\);"
         push_replacement = """mSceneLayer.pushLayers(getContext(), viewport, contentViewport, this,
@@ -303,6 +305,10 @@ for filename, target_dir in file_mappings.items():
             print(f"[FATAL] Could not find mSceneLayer.pushLayers call site in {filename}")
             sys.exit(1)
 
+    elif filename == "StackLayout.java":
+        content = re.sub(r'import\s+org\.chromium\.base\.supplier\.ObservableSupplier;[\r\n]+', '', content)
+        content = content.replace("ObservableSupplier<BrowserControlsStateProvider>", "BrowserControlsStateProvider")
+
     elif filename == "Stack.java":
         content = content.replace("!mLayout.isHiding()", "!mLayout.isStartingToHide()")
         create_pattern = r"mLayout\.createLayoutTab\s*\([^;]+?\);"
@@ -312,7 +318,6 @@ for filename, target_dir in file_mappings.items():
             print(f"[FATAL] Could not find mLayout.createLayoutTab call site in {filename}")
             sys.exit(1)
 
-    # Neutralize deleted resource references with safe physical constants
     content = content.replace("res.getDimensionPixelOffset(R.dimen.stacked_tab_visible_size) * pxToDp", "28.0f")
     content = content.replace("res.getDimensionPixelOffset(R.dimen.stack_buffer_width) * pxToDp", "0.0f")
     content = content.replace("res.getDimensionPixelOffset(R.dimen.stack_buffer_height) * pxToDp", "0.0f")
@@ -328,7 +333,6 @@ for filename, target_dir in file_mappings.items():
     content = content.replace("res.getDimensionPixelOffset(R.dimen.min_spacing) * pxToDp", "64.0f")
     content = content.replace("resources.getDimensionPixelSize(R.dimen.open_new_tab_animation_y_translation)", "(int) (50.0f * resources.getDisplayMetrics().density)")
 
-    # Targeted check: only fail if known-deleted resources slipped past replacement
     for deleted_res in KNOWN_DELETED_RESOURCES:
         if deleted_res in content:
             print(f"[FATAL] Unreplaced deleted resource '{deleted_res}' found in {filename}")
@@ -513,9 +517,8 @@ public class NonOverlappingStack extends Stack {
 print("[aerium] Step 4: Deployed authentic NonOverlappingStack.java")
 
 # ==============================================================================
-# STEP 5: REGISTER SOURCES IN CHROME_JAVA_SOURCES.GNI AND ADD BUILD.GN DEPS
+# STEP 5: REGISTER SOURCES IN CHROME_JAVA_SOURCES.GNI
 # ==============================================================================
-# 1. Register sources in chrome_java_sources.gni
 gni_path = find_file("chrome_java_sources.gni")
 with open(gni_path, "r", encoding="utf-8") as f:
     gni_c = f.read()
@@ -541,34 +544,6 @@ for entry in m88_entries:
 
 patch_file(gni_path, anchor, anchor + new_entries, "chrome_java_sources.gni registration")
 
-# 2. Add //base:supplier_java to chrome_java deps in chrome/android/BUILD.gn
-build_gn_path = os.path.join(src_root, "chrome", "android", "BUILD.gn")
-if not os.path.isfile(build_gn_path):
-    for candidate in glob.glob("**/chrome/android/BUILD.gn", recursive=True):
-        if not candidate.startswith("out") and "third_party" not in candidate:
-            build_gn_path = os.path.abspath(candidate)
-            break
-
-with open(build_gn_path, "r", encoding="utf-8") as f:
-    bgn_c = f.read()
-
-pattern = r'(android_library\("chrome_java"\)\s*\{[\s\S]*?deps\s*=\s*\[)([\s\S]*?)(?=\])'
-match = re.search(pattern, bgn_c)
-if match:
-    deps_content = match.group(2)
-    if '"//base:supplier_java",' not in deps_content:
-        insert_idx = match.start(2)
-        bgn_c = bgn_c[:insert_idx] + '\n    "//base:supplier_java",' + bgn_c[insert_idx:]
-        with open(build_gn_path, "w", encoding="utf-8") as f:
-            f.write(bgn_c)
-        print("[aerium] Added //base:supplier_java to chrome_java deps in chrome/android/BUILD.gn")
-    else:
-        print("[aerium] //base:supplier_java already present in chrome_java deps")
-else:
-    print("[FATAL] Could not locate android_library(\"chrome_java\") deps block in chrome/android/BUILD.gn")
-    sys.exit(1)
-
-
 # ==============================================================================
 # STEP 6: HOOK LayoutManagerChromePhone.java
 # ==============================================================================
@@ -586,21 +561,49 @@ destroy_repl = """mNewTabAnimationLayout.destroy();
         }"""
 patch_file(lm_path, destroy_anchor, destroy_repl, "LayoutManager destroy hook")
 
+# Init instantiation (strips older experimental wrappers if present)
+with open(lm_path, "r", encoding="utf-8") as f:
+    lm_c = f.read()
+
 init_anchor = "mNewTabAnimationLayout.setTabContentManager(tabContentManager);"
 init_repl = """mNewTabAnimationLayout.setTabContentManager(tabContentManager);
 
-        org.chromium.base.supplier.ObservableSupplierImpl<
-                org.chromium.chrome.browser.browser_controls.BrowserControlsStateProvider>
-                controlsSupplier = new org.chromium.base.supplier.ObservableSupplierImpl<>();
-        controlsSupplier.set(getBrowserControlsManager());
         mStackLayout =
                 new org.chromium.chrome.browser.compositor.layouts.phone.StackLayout(
-                        context, this, renderHost, controlsSupplier);
+                        context, this, renderHost, getBrowserControlsManager());
         mStackLayout.setTabModelSelector(selector, tabContentManager);"""
-patch_file(lm_path, init_anchor, init_repl, "LayoutManager init instantiation")
 
-routing_anchor = "    @Override\n    protected Layout getLayoutForType(int layoutType) {"
-routing_repl = """    @Override
+if init_repl in lm_c:
+    print("[aerium] Already patched: LayoutManager init instantiation")
+else:
+    lm_c = re.sub(
+        r'mNewTabAnimationLayout\.setTabContentManager\(tabContentManager\);[\s\S]*?mStackLayout\.setTabModelSelector\(selector,\s*tabContentManager\);',
+        'mNewTabAnimationLayout.setTabContentManager(tabContentManager);',
+        lm_c
+    )
+    if init_anchor not in lm_c:
+        print(f"[FATAL] Anchor text not found in {lm_path} for: LayoutManager init instantiation")
+        sys.exit(1)
+    lm_c = lm_c.replace(init_anchor, init_repl, 1)
+    with open(lm_path, "w", encoding="utf-8") as f:
+        f.write(lm_c)
+    print("[aerium] Successfully applied: LayoutManager init instantiation")
+
+# Layout routing hooks
+with open(lm_path, "r", encoding="utf-8") as f:
+    lm_c = f.read()
+
+start_showing_marker = 'aeriumMode'
+if start_showing_marker in lm_c:
+    print("[aerium] Already patched: LayoutManager layout routing hooks")
+else:
+    routing_match = re.search(r"@Override\s+protected\s+Layout\s+getLayoutForType\s*\(\s*int\s+layoutType\s*\)\s*\{", lm_c)
+    if not routing_match:
+        print(f"[FATAL] Could not find getLayoutForType anchor in {lm_path}")
+        sys.exit(1)
+    
+    idx = routing_match.start()
+    routing_hooks = """    @Override
     public void startShowing(Layout layout, boolean animate) {
         String aeriumMode =
                 org.chromium.base.ContextUtils.getAppSharedPreferences()
@@ -618,9 +621,8 @@ routing_repl = """    @Override
         super.startShowing(layout, animate);
     }
 
-    @Override
-    protected Layout getLayoutForType(int layoutType) {
-        if (layoutType == LayoutType.SIMPLE_ANIMATION) {
+    """
+    body_insert = """if (layoutType == LayoutType.SIMPLE_ANIMATION) {
             return mNewTabAnimationLayout;
         }
         String aeriumMode =
@@ -631,7 +633,21 @@ routing_repl = """    @Override
                 if (mStackLayout != null) return mStackLayout;
             }
         }"""
-patch_file(lm_path, routing_anchor, routing_repl, "LayoutManager layout routing hooks")
+    
+    lm_c = lm_c[:idx] + routing_hooks + lm_c[idx:]
+    simple_anim_anchor = "if (layoutType == LayoutType.SIMPLE_ANIMATION) {\n            return mNewTabAnimationLayout;\n        }"
+    if simple_anim_anchor in lm_c:
+        lm_c = lm_c.replace(simple_anim_anchor, body_insert, 1)
+    else:
+        lm_c = re.sub(
+            r'if\s*\(\s*layoutType\s*==\s*LayoutType\.SIMPLE_ANIMATION\s*\)\s*\{\s*return\s+mNewTabAnimationLayout;\s*\}',
+            body_insert,
+            lm_c,
+            count=1
+        )
+    with open(lm_path, "w", encoding="utf-8") as f:
+        f.write(lm_c)
+    print("[aerium] Successfully applied: LayoutManager layout routing hooks")
 
 # ==============================================================================
 # STEP 7: INJECT STRINGS INTO ANDROID_CHROME_STRINGS.GRD
@@ -758,20 +774,18 @@ with open(tabs_settings_java, "r", encoding="utf-8") as f:
     ts_c = f.read()
 
 if "aerium_tab_switcher_mode" not in ts_c:
-    # 1. Add ListPreference import
     if "import androidx.preference.ListPreference;" not in ts_c:
-        import_anchor = "import androidx.preference.Preference;\n"
+        import_anchor = "import androidx.preference.Preference;"
         if import_anchor in ts_c:
             ts_c = ts_c.replace(
                 import_anchor,
-                "import androidx.preference.Preference;\nimport androidx.preference.ListPreference;\n",
+                "import androidx.preference.Preference;\nimport androidx.preference.ListPreference;",
                 1
             )
         else:
             print(f"[FATAL] Import anchor '{import_anchor}' not found in {tabs_settings_java}")
             sys.exit(1)
 
-    # 2. Hook preference listener right after addPreferencesFromResource
     pref_anchor = "SettingsUtils.addPreferencesFromResource(this, R.xml.tabs_settings);"
     if pref_anchor not in ts_c:
         print(f"[FATAL] Anchor '{pref_anchor}' not found in {tabs_settings_java}")
@@ -806,17 +820,13 @@ with open(util_path, "r", encoding="utf-8") as f:
     u_c = f.read()
 
 if "getAeriumTabSwitcherMode" not in u_c:
-    method_anchor = """    public static boolean doesOemSupportDragToCreateInstance() {
-        return TAB_TEARING_OEM_ALLOWLIST.contains(Build.MANUFACTURER.toLowerCase(Locale.US));
-    }"""
-
-    if method_anchor not in u_c:
-        print(f"[FATAL] Anchor method not found in {util_path}")
+    match = re.search(r"public\s+static\s+boolean\s+doesOemSupportDragToCreateInstance\(\)\s*\{[\s\S]*?\}", u_c)
+    if not match:
+        print(f"[FATAL] Anchor method doesOemSupportDragToCreateInstance not found in {util_path}")
         sys.exit(1)
 
-    methods = """    public static boolean doesOemSupportDragToCreateInstance() {
-        return TAB_TEARING_OEM_ALLOWLIST.contains(Build.MANUFACTURER.toLowerCase(Locale.US));
-    }
+    idx = match.end()
+    methods = """
 
     public static final String AERIUM_TAB_SWITCHER_MODE_KEY = "aerium_tab_switcher_mode";
 
@@ -838,7 +848,7 @@ if "getAeriumTabSwitcherMode" not in u_c:
         return getAeriumTabSwitcherMode() == 2;
     }"""
 
-    u_c = u_c.replace(method_anchor, methods, 1)
+    u_c = u_c[:idx] + methods + u_c[idx:]
     with open(util_path, "w", encoding="utf-8") as f:
         f.write(u_c)
     print("[aerium] Step 11: TabUiFeatureUtilities patched with mode helpers")
