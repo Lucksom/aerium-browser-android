@@ -1,4 +1,4 @@
-name: Inspect M153 APIs Part 2
+name: Inspect M153 APIs Part 3
 
 on:
   workflow_dispatch:
@@ -10,103 +10,77 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Inspect Local Patches & Target Chromium APIs
+      - name: Inspect Remaining APIs
         run: |
           set +e
           VERSION="153.0.8010.36"
 
-          fetch_candidate() {
-            local out_name="$1"
-            shift
-            local paths=("$@")
+          fetch_raw() {
+            local file_path="$1"
+            local out_name="$2"
 
-            for file_path in "${paths[@]}"; do
-              local gh_url="https://raw.githubusercontent.com/chromium/chromium/${VERSION}/${file_path}"
-              local status=$(curl -sL -w "%{http_code}" -o "$out_name" "$gh_url")
-              if [ "$status" -eq 200 ] && [ -s "$out_name" ]; then
-                echo ">>> [SUCCESS] Fetched $out_name from: $file_path"
+            local gh_url="https://raw.githubusercontent.com/chromium/chromium/${VERSION}/${file_path}"
+            local status=$(curl -sL -w "%{http_code}" -o "$out_name" "$gh_url")
+            
+            if [ "$status" -eq 200 ] && [ -s "$out_name" ]; then
+              echo ">>> [SUCCESS] Fetched $out_name"
+              return 0
+            fi
+
+            sleep 1
+            local gitiles_url="https://chromium.googlesource.com/chromium/src/+/refs/tags/${VERSION}/${file_path}?format=TEXT"
+            status=$(curl -sL -A "Mozilla/5.0" -w "%{http_code}" -o b64.tmp "$gitiles_url")
+            if [ "$status" -eq 200 ]; then
+              base64 -d b64.tmp > "$out_name" 2>/dev/null
+              if [ -s "$out_name" ]; then
+                echo ">>> [SUCCESS] Fetched $out_name via Gitiles"
+                rm -f b64.tmp
                 return 0
               fi
-            done
+            fi
 
-            echo "[ERROR] Could not fetch $out_name from any candidate path"
+            echo "[ERROR] Could not fetch $file_path (HTTP $status)"
+            rm -f b64.tmp
             return 1
           }
 
           echo "=========================================================="
-          echo "### 1. Check Local Patches for TabListCoordinator.java (newDefaultSize error) ###"
+          echo "### 1. Locate TabListCoordinator patch in repository ###"
           echo "=========================================================="
-          grep -rn -C 3 "classicCardHeightPx" . || echo "[NONE] classicCardHeightPx not found in repo patches"
-          grep -rn -C 3 "newDefaultSize" . || echo "[NONE] newDefaultSize not found in repo patches"
+          grep -rn "TabListCoordinator" . || echo "[NONE] TabListCoordinator not found in workspace"
 
           echo
           echo "=========================================================="
-          echo "### 2. LayoutType.java ###"
+          echo "### 2. TabThemeColorHelper.java ###"
           echo "=========================================================="
-          fetch_candidate "LayoutType.java" \
-            "chrome/browser/ui/android/layouts/java/src/org/chromium/chrome/browser/layouts/LayoutType.java" \
-            "chrome/browser/layouts/android/java/src/org/chromium/chrome/browser/layouts/LayoutType.java" \
-            "components/browser_ui/widget/android/java/src/org/chromium/components/browser_ui/widget/LayoutType.java" \
-            "chrome/android/java/src/org/chromium/chrome/browser/layouts/LayoutType.java"
-          if [ -s LayoutType.java ]; then
-            cat LayoutType.java
-          fi
-
-          echo
-          echo "=========================================================="
-          echo "### 3. Layout.java (Check Imports for LayoutType package) ###"
-          echo "=========================================================="
-          fetch_candidate "Layout.java" \
-            "chrome/android/java/src/org/chromium/chrome/browser/compositor/layouts/Layout.java"
-          if [ -s Layout.java ]; then
-            grep -n "import.*LayoutType" Layout.java || echo "[NONE] LayoutType import not found"
-            grep -n -C 2 "public @LayoutType int getLayoutType" Layout.java || echo "[NONE] getLayoutType not found"
-          fi
-
-          echo
-          echo "=========================================================="
-          echo "### 4. TabModel.java (Tab retrieval and closing methods) ###"
-          echo "=========================================================="
-          fetch_candidate "TabModel.java" \
-            "chrome/browser/tabmodel/android/java/src/org/chromium/chrome/browser/tabmodel/TabModel.java"
-          if [ -s TabModel.java ]; then
-            echo "--- getTab methods ---"
-            grep -n -E "Tab getTab|int indexOf" TabModel.java
-            echo "--- closeTab / closeAllTabs methods ---"
-            grep -n -E "closeTab|closeAllTabs|getTabRemover" TabModel.java
-          fi
-
-          echo
-          echo "=========================================================="
-          echo "### 5. TabModelSelector.java (Filter Provider & Model Index) ###"
-          echo "=========================================================="
-          fetch_candidate "TabModelSelector.java" \
-            "chrome/browser/tabmodel/android/java/src/org/chromium/chrome/browser/tabmodel/TabModelSelector.java"
-          if [ -s TabModelSelector.java ]; then
-            grep -n -E "Filter|TabGroup|getCurrentModel" TabModelSelector.java
-          fi
-
-          echo
-          echo "=========================================================="
-          echo "### 6. TabThemeColorHelper.java ###"
-          echo "=========================================================="
-          fetch_candidate "TabThemeColorHelper.java" \
-            "chrome/browser/tab/java/src/org/chromium/chrome/browser/tab/TabThemeColorHelper.java" \
-            "chrome/android/java/src/org/chromium/chrome/browser/tab/TabThemeColorHelper.java" \
-            "chrome/browser/ui/android/theme/java/src/org/chromium/chrome/browser/theme/TabThemeColorHelper.java" \
-            "chrome/browser/android/tab/java/src/org/chromium/chrome/browser/tab/TabThemeColorHelper.java"
+          fetch_raw "chrome/android/java/src/org/chromium/chrome/browser/tab/TabThemeColorHelper.java" "TabThemeColorHelper.java"
           if [ -s TabThemeColorHelper.java ]; then
-            grep -n -C 3 "getBackgroundColor" TabThemeColorHelper.java
+            grep -n -C 4 "getBackgroundColor" TabThemeColorHelper.java
           fi
 
           echo
           echo "=========================================================="
-          echo "### 7. HomepageManager.java (shouldCloseAppWithZeroTabs) ###"
+          echo "### 3. TabRemover.java (Tab Closure Signatures) ###"
           echo "=========================================================="
-          fetch_candidate "HomepageManager.java" \
-            "chrome/browser/homepage/android/java/src/org/chromium/chrome/browser/homepage/HomepageManager.java" \
-            "chrome/android/java/src/org/chromium/chrome/browser/homepage/HomepageManager.java" \
-            "chrome/browser/ui/android/toolbar/java/src/org/chromium/chrome/browser/toolbar/top/HomepageManager.java"
-          if [ -s HomepageManager.java ]; then
-            grep -n -C 3 "shouldCloseAppWithZeroTabs" HomepageManager.java
+          fetch_raw "chrome/browser/tabmodel/android/java/src/org/chromium/chrome/browser/tabmodel/TabRemover.java" "TabRemover.java"
+          if [ -s TabRemover.java ]; then
+            nl -ba TabRemover.java
+          fi
+
+          echo
+          echo "=========================================================="
+          echo "### 4. TabList.java (Index & Retrieval Signatures) ###"
+          echo "=========================================================="
+          fetch_raw "chrome/browser/tabmodel/android/java/src/org/chromium/chrome/browser/tabmodel/TabList.java" "TabList.java"
+          if [ -s TabList.java ]; then
+            grep -n "public" TabList.java
+          fi
+
+          echo
+          echo "=========================================================="
+          echo "### 5. TabModelSelector.java (Full Interface) ###"
+          echo "=========================================================="
+          fetch_raw "chrome/browser/tabmodel/android/java/src/org/chromium/chrome/browser/tabmodel/TabModelSelector.java" "TabModelSelector.java"
+          if [ -s TabModelSelector.java ]; then
+            nl -ba TabModelSelector.java
           fi
