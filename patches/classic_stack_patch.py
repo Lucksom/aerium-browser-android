@@ -711,26 +711,45 @@ with open(tabs_settings_java, "r", encoding="utf-8") as f:
     ts_c = f.read()
 
 if "aerium_tab_switcher_mode" not in ts_c:
+    # 1. Add ListPreference import
     if "import androidx.preference.ListPreference;" not in ts_c:
-        ts_c = "import androidx.preference.ListPreference;\n" + ts_c
+        import_anchor = "import androidx.preference.Preference;\n"
+        if import_anchor in ts_c:
+            ts_c = ts_c.replace(
+                import_anchor,
+                "import androidx.preference.Preference;\nimport androidx.preference.ListPreference;\n",
+                1
+            )
+        else:
+            print(f"[FATAL] Import anchor '{import_anchor}' not found in {tabs_settings_java}")
+            sys.exit(1)
 
-    sync_code = """
-        ListPreference aeriumPref = (ListPreference) findPreference("aerium_tab_switcher_mode");
+    # 2. Hook preference listener right after addPreferencesFromResource
+    pref_anchor = "SettingsUtils.addPreferencesFromResource(this, R.xml.tabs_settings);"
+    if pref_anchor not in ts_c:
+        print(f"[FATAL] Anchor '{pref_anchor}' not found in {tabs_settings_java}")
+        sys.exit(1)
+
+    sync_code = """SettingsUtils.addPreferencesFromResource(this, R.xml.tabs_settings);
+
+        androidx.preference.ListPreference aeriumPref =
+                (androidx.preference.ListPreference) findPreference("aerium_tab_switcher_mode");
         if (aeriumPref != null) {
-            aeriumPref.setSummaryProvider(ListPreference.SimpleSummaryProvider.getInstance());
+            aeriumPref.setSummaryProvider(
+                    androidx.preference.ListPreference.SimpleSummaryProvider.getInstance());
             aeriumPref.setOnPreferenceChangeListener((preference, newValue) -> {
                 org.chromium.base.ContextUtils.getAppSharedPreferences().edit()
                         .putString("aerium_tab_switcher_mode", (String) newValue).apply();
                 return true;
             });
-        }
-"""
-    pattern_create = r"(void\s+onCreatePreferences\s*\([^)]*\)\s*\{[\s\S]*?setPreferencesFromResource\([^)]*\);)"
-    match = re.search(pattern_create, ts_c)
-    if not match:
-        print(f"[FATAL] Could not find onCreatePreferences/setPreferencesFromResource anchor in {tabs_settings_java}")
-        sys.exit(1)
-    patch_file(tabs_settings_java, match.group(0), match.group(0) + sync_code, "TabsSettings.java preference listener hook")
+        }"""
+
+    ts_c = ts_c.replace(pref_anchor, sync_code, 1)
+    with open(tabs_settings_java, "w", encoding="utf-8") as f:
+        f.write(ts_c)
+    print("[aerium] Step 10: Hooked preference listener into TabsSettings.java")
+else:
+    print("[aerium] Step 10: TabsSettings.java already patched")
 
 # ==============================================================================
 # STEP 11: TABUIFEATUREUTILITIES.JAVA HELPER
@@ -740,7 +759,18 @@ with open(util_path, "r", encoding="utf-8") as f:
     u_c = f.read()
 
 if "getAeriumTabSwitcherMode" not in u_c:
-    methods = """
+    method_anchor = """    public static boolean doesOemSupportDragToCreateInstance() {
+        return TAB_TEARING_OEM_ALLOWLIST.contains(Build.MANUFACTURER.toLowerCase(Locale.US));
+    }"""
+
+    if method_anchor not in u_c:
+        print(f"[FATAL] Anchor method not found in {util_path}")
+        sys.exit(1)
+
+    methods = """    public static boolean doesOemSupportDragToCreateInstance() {
+        return TAB_TEARING_OEM_ALLOWLIST.contains(Build.MANUFACTURER.toLowerCase(Locale.US));
+    }
+
     public static final String AERIUM_TAB_SWITCHER_MODE_KEY = "aerium_tab_switcher_mode";
 
     public static int getAeriumTabSwitcherMode() {
@@ -759,16 +789,13 @@ if "getAeriumTabSwitcherMode" not in u_c:
 
     public static boolean isTabGroupDisabledForVerticalStack() {
         return getAeriumTabSwitcherMode() == 2;
-    }
-"""
-    closing_anchor = "\n}"
-    idx = u_c.rfind(closing_anchor)
-    if idx == -1:
-        print(f"[FATAL] Closing anchor not found in {util_path}")
-        sys.exit(1)
-    u_c = u_c[:idx] + "\n" + methods + closing_anchor
+    }"""
+
+    u_c = u_c.replace(method_anchor, methods, 1)
     with open(util_path, "w", encoding="utf-8") as f:
         f.write(u_c)
     print("[aerium] Step 11: TabUiFeatureUtilities patched with mode helpers")
+else:
+    print("[aerium] Step 11: TabUiFeatureUtilities already patched")
 
 print("\n[aerium] All steps verified and completed cleanly.")
