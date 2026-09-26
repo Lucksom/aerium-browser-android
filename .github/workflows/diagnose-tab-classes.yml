@@ -1,4 +1,4 @@
-name: Inspect Specific Files Directly
+name: Inspect Target Files for Classic Stack
 
 on:
   workflow_dispatch:
@@ -12,21 +12,19 @@ jobs:
           set +e
           VERSION="153.0.8010.36"
 
-          # Helper function: tries GitHub Raw CDN first, falls back to Gitiles with User-Agent
+          # Helper function: tries GitHub Raw CDN first, falls back to Gitiles
           fetch_raw() {
             local file_path="$1"
             local out_name="$2"
 
-            # 1. GitHub Raw CDN (unthrottled on GitHub Actions, raw plain text)
             local gh_url="https://raw.githubusercontent.com/chromium/chromium/${VERSION}/${file_path}"
             local status=$(curl -sL -w "%{http_code}" -o "$out_name" "$gh_url")
-            
+
             if [ "$status" -eq 200 ] && [ -s "$out_name" ]; then
               echo ">>> Fetched $out_name via GitHub Raw"
               return 0
             fi
 
-            # 2. Gitiles fallback (adds delay and browser User-Agent to bypass 503)
             sleep 1
             local gitiles_url="https://chromium.googlesource.com/chromium/src/+/refs/tags/${VERSION}/${file_path}?format=TEXT"
             status=$(curl -sL -A "Mozilla/5.0" -w "%{http_code}" -o b64.tmp "$gitiles_url")
@@ -45,34 +43,19 @@ jobs:
           }
 
           echo "=========================================================="
-          echo "### 1. Inspecting LayoutTab.java ###"
+          echo "### 1. Inspecting TabsSettings.java (Full Content) ###"
           echo "=========================================================="
-          fetch_raw "chrome/android/java/src/org/chromium/chrome/browser/compositor/layouts/components/LayoutTab.java" "LayoutTab.java"
-          if [ -s LayoutTab.java ]; then
-            echo "--- Tilt Properties ---"
-            grep -n -E "TILT_X|TILT_Y|setTilt|getTilt" LayoutTab.java || echo "[NONE] Tilt properties missing"
-            echo "--- Border Properties ---"
-            grep -n -E "SIDE_BORDER_SCALE|BORDER_CLOSE_BUTTON_ALPHA|BORDER_ALPHA" LayoutTab.java || echo "[NONE] Border properties missing"
-            echo "--- Close Button Properties ---"
-            grep -n -E "CLOSE_BUTTON_WIDTH_DP|CLOSE_PLACEMENT|CLOSE_BUTTON_IS_ON_RIGHT" LayoutTab.java || echo "[NONE] Close button properties missing"
+          fetch_raw "chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabsSettings.java" "TabsSettings.java"
+          if [ -s TabsSettings.java ]; then
+            nl -ba TabsSettings.java
           fi
 
           echo
           echo "=========================================================="
-          echo "### 2. Inspecting Layout.java ###"
+          echo "### 2. Inspecting TabUiFeatureUtilities.java (Tail & Structure) ###"
           echo "=========================================================="
-          fetch_raw "chrome/android/java/src/org/chromium/chrome/browser/compositor/layouts/Layout.java" "Layout.java"
-          if [ -s Layout.java ]; then
-            echo "--- createLayoutTab & Constants ---"
-            grep -n -C 3 "createLayoutTab" Layout.java || echo "[NONE] createLayoutTab not found in Layout.java"
-            grep -n "SHOW_CLOSE_BUTTON" Layout.java || echo "[NONE] SHOW_CLOSE_BUTTON not found in Layout.java"
-          fi
-
-          echo
-          echo "=========================================================="
-          echo "### 3. Inspecting LayoutRenderHost.java ###"
-          echo "=========================================================="
-          fetch_raw "chrome/android/java/src/org/chromium/chrome/browser/compositor/layouts/LayoutRenderHost.java" "LayoutRenderHost.java"
-          if [ -s LayoutRenderHost.java ]; then
-            grep -n -C 3 "getTitleCache" LayoutRenderHost.java || echo "[NONE] getTitleCache not in LayoutRenderHost.java"
+          fetch_raw "chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabUiFeatureUtilities.java" "TabUiFeatureUtilities.java"
+          if [ -s TabUiFeatureUtilities.java ]; then
+            echo "--- Last 40 lines of TabUiFeatureUtilities.java ---"
+            tail -n 40 TabUiFeatureUtilities.java | nl -ba
           fi
