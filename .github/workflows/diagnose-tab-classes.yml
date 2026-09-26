@@ -29,9 +29,9 @@ jobs:
           components/browser_ui/widget/android/
           EOF
 
-          # Single fast network fetch (takes ~15-25 seconds)
-          git fetch --depth 1 origin "$VERSION"
-          git checkout "$VERSION"
+          # Fetch the tag directly to FETCH_HEAD and checkout
+          git fetch --depth 1 origin tag "$VERSION"
+          git checkout FETCH_HEAD
 
       - name: 1. Locate ScrollDirection Locally
         working-directory: chromium-inspect
@@ -71,7 +71,7 @@ jobs:
           in_target = False
           found_supplier = False
           for line in lines:
-              if "chrome_java" in line:
+              if "chrome_java" in line and "android_library" in line:
                   in_target = True
               if in_target and "deps = [" in line:
                   pass
