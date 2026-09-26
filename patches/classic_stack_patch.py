@@ -79,120 +79,138 @@ if not patch_dir:
 print(f"[aerium] Resolved patch_dir: {patch_dir}")
 
 # ==============================================================================
-# ==============================================================================
-# STEP 1: RESTORE MISSING STACK PROPERTIES IN LayoutTab.java
+# STEP 1: RESTORE MISSING STACK PROPERTIES IN LayoutTab.java (NO DUPLICATES)
 # ==============================================================================
 lt_path = find_file("LayoutTab.java", path_hint=os.path.join("compositor", "layouts", "components"))
 with open(lt_path, "r", encoding="utf-8") as f:
     lt_c = f.read()
 
-# 1. Inject missing PropertyKeys
-if "TILT_X_IN_DEGREES = new WritableFloatPropertyKey();" not in lt_c:
+keys_definitions = [
+    ("TILT_X_IN_DEGREES", "public static final WritableFloatPropertyKey TILT_X_IN_DEGREES = new WritableFloatPropertyKey();"),
+    ("TILT_Y_IN_DEGREES", "public static final WritableFloatPropertyKey TILT_Y_IN_DEGREES = new WritableFloatPropertyKey();"),
+    ("SIDE_BORDER_SCALE", "public static final WritableFloatPropertyKey SIDE_BORDER_SCALE = new WritableFloatPropertyKey();"),
+    ("BORDER_CLOSE_BUTTON_ALPHA", "public static final WritableFloatPropertyKey BORDER_CLOSE_BUTTON_ALPHA = new WritableFloatPropertyKey();"),
+    ("MAX_CONTENT_HEIGHT", "public static final WritableFloatPropertyKey MAX_CONTENT_HEIGHT = new WritableFloatPropertyKey();"),
+    ("TOOLBAR_Y_OFFSET", "public static final WritableFloatPropertyKey TOOLBAR_Y_OFFSET = new WritableFloatPropertyKey();"),
+    ("TOOLBAR_ALPHA", "public static final WritableFloatPropertyKey TOOLBAR_ALPHA = new WritableFloatPropertyKey();"),
+    ("SATURATION", "public static final WritableFloatPropertyKey SATURATION = new WritableFloatPropertyKey();"),
+    ("CLOSE_BUTTON_IS_ON_RIGHT", "public static final org.chromium.ui.modelutil.PropertyModel.WritableBooleanPropertyKey CLOSE_BUTTON_IS_ON_RIGHT = new org.chromium.ui.modelutil.PropertyModel.WritableBooleanPropertyKey();"),
+    ("CLOSE_PLACEMENT", "public static final org.chromium.ui.modelutil.PropertyModel.WritableObjectPropertyKey<android.graphics.RectF> CLOSE_PLACEMENT = new org.chromium.ui.modelutil.PropertyModel.WritableObjectPropertyKey<>();"),
+    ("CLOSE_BUTTON_WIDTH_DP", "public static final float CLOSE_BUTTON_WIDTH_DP = 36.0f;"),
+]
+
+keys_to_inject = []
+for key_name, defn in keys_definitions:
+    if not re.search(r'\b' + key_name + r'\b', lt_c):
+        keys_to_inject.append("    " + defn)
+
+if keys_to_inject:
     keys_anchor = "public static final WritableFloatPropertyKey BORDER_ALPHA = new WritableFloatPropertyKey();"
     if keys_anchor not in lt_c:
         print(f"[FATAL] Keys anchor '{keys_anchor}' not found in {lt_path}")
         sys.exit(1)
-    keys_replacement = """public static final WritableFloatPropertyKey BORDER_ALPHA = new WritableFloatPropertyKey();
-    public static final WritableFloatPropertyKey TILT_X_IN_DEGREES = new WritableFloatPropertyKey();
-    public static final WritableFloatPropertyKey TILT_Y_IN_DEGREES = new WritableFloatPropertyKey();
-    public static final WritableFloatPropertyKey SIDE_BORDER_SCALE = new WritableFloatPropertyKey();
-    public static final WritableFloatPropertyKey BORDER_CLOSE_BUTTON_ALPHA = new WritableFloatPropertyKey();
-    public static final WritableFloatPropertyKey MAX_CONTENT_HEIGHT = new WritableFloatPropertyKey();
-    public static final WritableFloatPropertyKey TOOLBAR_Y_OFFSET = new WritableFloatPropertyKey();
-    public static final WritableFloatPropertyKey TOOLBAR_ALPHA = new WritableFloatPropertyKey();
-    public static final WritableFloatPropertyKey SATURATION = new WritableFloatPropertyKey();
-    public static final org.chromium.ui.modelutil.PropertyModel.WritableBooleanPropertyKey CLOSE_BUTTON_IS_ON_RIGHT =
-            new org.chromium.ui.modelutil.PropertyModel.WritableBooleanPropertyKey();
-    public static final org.chromium.ui.modelutil.PropertyModel.WritableObjectPropertyKey<android.graphics.RectF> CLOSE_PLACEMENT =
-            new org.chromium.ui.modelutil.PropertyModel.WritableObjectPropertyKey<>();
-    public static final float CLOSE_BUTTON_WIDTH_DP = 36.0f;"""
-    lt_c = lt_c.replace(keys_anchor, keys_replacement, 1)
-    print("[aerium] Injected PropertyKey definitions into LayoutTab.java")
+    replacement = keys_anchor + "\n" + "\n".join(keys_to_inject)
+    lt_c = lt_c.replace(keys_anchor, replacement, 1)
+    print(f"[aerium] Injected {len(keys_to_inject)} missing PropertyKey definitions into LayoutTab.java")
 else:
-    print("[aerium] Already patched: LayoutTab.java missing PropertyKeys")
+    print("[aerium] LayoutTab.java PropertyKey definitions already up to date")
 
-# 2. Inject keys into ALL_KEYS array using flexible whitespace/newline matching
-if "TILT_X_IN_DEGREES," not in lt_c:
-    all_keys_addition = """
-            TILT_X_IN_DEGREES,
-            TILT_Y_IN_DEGREES,
-            SIDE_BORDER_SCALE,
-            BORDER_CLOSE_BUTTON_ALPHA,
-            MAX_CONTENT_HEIGHT,
-            TOOLBAR_Y_OFFSET,
-            TOOLBAR_ALPHA,
-            SATURATION,
-            CLOSE_BUTTON_IS_ON_RIGHT,
-            CLOSE_PLACEMENT,"""
+all_keys_candidates = [
+    "TILT_X_IN_DEGREES",
+    "TILT_Y_IN_DEGREES",
+    "SIDE_BORDER_SCALE",
+    "BORDER_CLOSE_BUTTON_ALPHA",
+    "MAX_CONTENT_HEIGHT",
+    "TOOLBAR_Y_OFFSET",
+    "TOOLBAR_ALPHA",
+    "SATURATION",
+    "CLOSE_BUTTON_IS_ON_RIGHT",
+    "CLOSE_PLACEMENT",
+]
 
-    all_keys_match = re.search(r"ALL_KEYS\s*=\s*(?:new\s+PropertyKey\[\]\s*)?\{", lt_c)
-    if all_keys_match:
-        idx = all_keys_match.end()
-        lt_c = lt_c[:idx] + all_keys_addition + lt_c[idx:]
-        print("[aerium] Injected PropertyKeys into ALL_KEYS array")
+all_keys_match = re.search(r"(ALL_KEYS\s*=\s*(?:new\s+PropertyKey\[\]\s*)?\{)([\s\S]*?)(?=\})", lt_c)
+if all_keys_match:
+    existing_all_keys = all_keys_match.group(2)
+    keys_to_add_to_array = []
+    for k in all_keys_candidates:
+        if not re.search(r'\b' + k + r'\b', existing_all_keys):
+            keys_to_add_to_array.append(f"            {k},")
+    if keys_to_add_to_array:
+        insert_idx = all_keys_match.start(2)
+        addition = "\n" + "\n".join(keys_to_add_to_array)
+        lt_c = lt_c[:insert_idx] + addition + lt_c[insert_idx:]
+        print(f"[aerium] Injected {len(keys_to_add_to_array)} keys into ALL_KEYS array")
     else:
-        border_match = re.search(r"(\s+BORDER_ALPHA,)", lt_c)
-        if border_match:
-            idx = border_match.end()
-            lt_c = lt_c[:idx] + all_keys_addition + lt_c[idx:]
-            print("[aerium] Injected PropertyKeys into ALL_KEYS array (via BORDER_ALPHA,)")
-        else:
-            print(f"[FATAL] Could not find ALL_KEYS array or BORDER_ALPHA, in {lt_path}")
-            sys.exit(1)
+        print("[aerium] ALL_KEYS array already up to date")
 else:
-    print("[aerium] Already patched: LayoutTab.java ALL_KEYS array expansion")
+    border_match = re.search(r"(\s+BORDER_ALPHA,)", lt_c)
+    if border_match:
+        idx = border_match.end()
+        lt_c = lt_c[:idx] + "\n            TILT_X_IN_DEGREES,\n            TILT_Y_IN_DEGREES,\n            SIDE_BORDER_SCALE,\n            BORDER_CLOSE_BUTTON_ALPHA,\n            CLOSE_BUTTON_IS_ON_RIGHT,\n            CLOSE_PLACEMENT," + lt_c[idx:]
+        print("[aerium] Injected PropertyKeys into ALL_KEYS array via fallback anchor")
 
-# 3. Inject methods before constructor
-if "public void setTiltX(" not in lt_c:
-    methods_addition = """    private float mTiltX;
+methods_candidates = [
+    ("setTiltX", "    public void setTiltX(float angle, float pivot) { mTiltX = angle; }"),
+    ("setTiltY", "    public void setTiltY(float angle, float pivot) { mTiltY = angle; }"),
+    ("getTiltX", "    public float getTiltX() { return mTiltX; }"),
+    ("getTiltY", "    public float getTiltY() { return mTiltY; }"),
+    ("setBorderCloseButtonAlpha", "    public void setBorderCloseButtonAlpha(float alpha) { mBorderCloseButtonAlpha = alpha; }"),
+    ("getBorderCloseButtonAlpha", "    public float getBorderCloseButtonAlpha() { return mBorderCloseButtonAlpha; }"),
+    ("setCloseButtonIsOnRight", "    public void setCloseButtonIsOnRight(boolean onRight) { mCloseButtonOnRight = onRight; }"),
+    ("isCloseButtonOnRight", "    public boolean isCloseButtonOnRight() { return mCloseButtonOnRight; }"),
+    ("getUnclampedOriginalContentHeight", "    public float getUnclampedOriginalContentHeight() { return getOriginalContentHeight(); }"),
+    ("getMaxContentWidth", "    public float getMaxContentWidth() { return mMaxContentWidth > 0 ? mMaxContentWidth : getOriginalContentWidth(); }"),
+    ("getMaxContentHeight", "    public float getMaxContentHeight() { return mMaxContentHeight > 0 ? mMaxContentHeight : getOriginalContentHeight(); }"),
+    ("setMaxContentWidth", "    public void setMaxContentWidth(float w) { mMaxContentWidth = w; }"),
+    ("setMaxContentHeight", "    public void setMaxContentHeight(float h) { mMaxContentHeight = h; }"),
+    ("shouldStall", "    public boolean shouldStall() { return false; }"),
+    ("setInsetBorderVertical", "    public void setInsetBorderVertical(boolean inset) {}"),
+    ("setShowToolbar", "    public void setShowToolbar(boolean show) {}"),
+    ("setToolbarAlpha", "    public void setToolbarAlpha(float alpha) { set(TOOLBAR_ALPHA, alpha); }"),
+    ("getToolbarAlpha", "    public float getToolbarAlpha() { return has(TOOLBAR_ALPHA) ? get(TOOLBAR_ALPHA) : 0f; }"),
+    ("setAnonymizeToolbar", "    public void setAnonymizeToolbar(boolean anonymize) {}"),
+    ("setDrawDecoration", "    public void setDrawDecoration(boolean draw) {}"),
+    ("setDecorationAlpha", "    public void setDecorationAlpha(float alpha) {}"),
+    ("setBorderScale", "    public void setBorderScale(float scale) {}"),
+    ("getFinalContentWidth", "    public float getFinalContentWidth() { return getScaledContentWidth(); }"),
+    ("getFinalContentHeight", "    public float getFinalContentHeight() { return getScaledContentHeight(); }"),
+]
+
+methods_to_inject = []
+for method_name, method_code in methods_candidates:
+    if not re.search(r'\b' + method_name + r'\s*\(', lt_c):
+        methods_to_inject.append(method_code)
+
+fields_code = ""
+if "private float mTiltX;" not in lt_c:
+    fields_code += """    private float mTiltX;
     private float mTiltY;
     private float mMaxContentWidth;
     private float mMaxContentHeight;
     private boolean mCloseButtonOnRight;
     private float mBorderCloseButtonAlpha;
-
-    public void setTiltX(float angle, float pivot) { mTiltX = angle; }
-    public void setTiltY(float angle, float pivot) { mTiltY = angle; }
-    public float getTiltX() { return mTiltX; }
-    public float getTiltY() { return mTiltY; }
-    public void setBorderCloseButtonAlpha(float alpha) { mBorderCloseButtonAlpha = alpha; }
-    public float getBorderCloseButtonAlpha() { return mBorderCloseButtonAlpha; }
-    public void setCloseButtonIsOnRight(boolean onRight) { mCloseButtonOnRight = onRight; }
-    public boolean isCloseButtonOnRight() { return mCloseButtonOnRight; }
-    public float getUnclampedOriginalContentHeight() { return getOriginalContentHeight(); }
-    public float getMaxContentWidth() { return mMaxContentWidth > 0 ? mMaxContentWidth : getOriginalContentWidth(); }
-    public float getMaxContentHeight() { return mMaxContentHeight > 0 ? mMaxContentHeight : getOriginalContentHeight(); }
-    public void setMaxContentWidth(float w) { mMaxContentWidth = w; }
-    public void setMaxContentHeight(float h) { mMaxContentHeight = h; }
-    public boolean shouldStall() { return false; }
-    public void setInsetBorderVertical(boolean inset) {}
-    public void setShowToolbar(boolean show) {}
-    public void setToolbarAlpha(float alpha) { set(TOOLBAR_ALPHA, alpha); }
-    public float getToolbarAlpha() { return has(TOOLBAR_ALPHA) ? get(TOOLBAR_ALPHA) : 0f; }
-    public void setAnonymizeToolbar(boolean anonymize) {}
-    public void setDrawDecoration(boolean draw) {}
-    public void setDecorationAlpha(float alpha) {}
-    public void setBorderScale(float scale) {}
-    public float getFinalContentWidth() { return getScaledContentWidth(); }
-    public float getFinalContentHeight() { return getScaledContentHeight(); }
-    private boolean has(org.chromium.ui.modelutil.PropertyModel.WritableFloatPropertyKey key) {
+"""
+if "private boolean has(" not in lt_c and any("has(" in m for m in methods_to_inject):
+    fields_code += """    private boolean has(org.chromium.ui.modelutil.PropertyModel.WritableFloatPropertyKey key) {
         try { return get(key) != 0.0f; } catch (Exception e) { return false; }
     }
+"""
 
-    """
+if methods_to_inject or fields_code:
     ctor_match = re.search(r"public\s+LayoutTab\s*\(", lt_c)
     if not ctor_match:
         print(f"[FATAL] Could not find 'public LayoutTab(' constructor in {lt_path}")
         sys.exit(1)
     idx = ctor_match.start()
-    lt_c = lt_c[:idx] + methods_addition + lt_c[idx:]
-    print("[aerium] Injected stack methods into LayoutTab.java")
-else:
-    print("[aerium] Already patched: LayoutTab.java stack methods")
+    addition = fields_code + "\n".join(methods_to_inject) + "\n\n    "
+    lt_c = lt_c[:idx] + addition + lt_c[idx:]
+    print(f"[aerium] Injected {len(methods_to_inject)} methods into LayoutTab.java")
 
 with open(lt_path, "w", encoding="utf-8") as f:
     f.write(lt_c)
 print("[aerium] Step 1: LayoutTab.java successfully updated")
+
+    
 
 # ==============================================================================
 # STEP 2: INJECT releaseTabLayout & SHOW_CLOSE_BUTTON IN Layout.java
@@ -495,8 +513,9 @@ public class NonOverlappingStack extends Stack {
 print("[aerium] Step 4: Deployed authentic NonOverlappingStack.java")
 
 # ==============================================================================
-# STEP 5: REGISTER SOURCES IN CHROME_JAVA_SOURCES.GNI
+# STEP 5: REGISTER SOURCES IN CHROME_JAVA_SOURCES.GNI AND ADD BUILD.GN DEPS
 # ==============================================================================
+# 1. Register sources in chrome_java_sources.gni
 gni_path = find_file("chrome_java_sources.gni")
 with open(gni_path, "r", encoding="utf-8") as f:
     gni_c = f.read()
@@ -521,6 +540,29 @@ for entry in m88_entries:
         new_entries += entry
 
 patch_file(gni_path, anchor, anchor + new_entries, "chrome_java_sources.gni registration")
+
+# 2. Add //base:supplier_java to chrome_java deps in chrome/android/BUILD.gn
+build_gn_path = find_file("BUILD.gn", path_hint=os.path.join("chrome", "android"))
+with open(build_gn_path, "r", encoding="utf-8") as f:
+    bgn_c = f.read()
+
+pattern = r'(android_library\("chrome_java"\)\s*\{[\s\S]*?deps\s*=\s*\[)([\s\S]*?)(?=\])'
+match = re.search(pattern, bgn_c)
+if match:
+    deps_content = match.group(2)
+    if '"//base:supplier_java",' not in deps_content:
+        insert_idx = match.start(2)
+        bgn_c = bgn_c[:insert_idx] + '\n    "//base:supplier_java",' + bgn_c[insert_idx:]
+        with open(build_gn_path, "w", encoding="utf-8") as f:
+            f.write(bgn_c)
+        print("[aerium] Added //base:supplier_java to chrome_java deps in chrome/android/BUILD.gn")
+    else:
+        print("[aerium] //base:supplier_java already present in chrome_java deps")
+else:
+    print("[FATAL] Could not locate android_library(\"chrome_java\") deps block in chrome/android/BUILD.gn")
+    sys.exit(1)
+
+
 
 # ==============================================================================
 # STEP 6: HOOK LayoutManagerChromePhone.java
