@@ -1,4 +1,4 @@
-name: Fast Inspect Layout & Stack Dependencies
+name: Inspect ScrollDirection and GN target v2
 
 on:
   workflow_dispatch:
@@ -8,113 +8,78 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: true
 
-      - name: Fast Sparse Checkout of Candidate Directories
+      - name: Resolve Chromium version
         run: |
-          VERSION=$(grep -m1 -o '[0-9]\+\(\.[0-9]\+\)\{3\}' vanadium/args.gn 2>/dev/null || echo "153.0.8010.36")
-          echo "Target Chromium Version: $VERSION"
+          VERSION=$(grep -m1 -o '[0-9]\+\(\.[0-9]\+\)\{3\}' vanadium/args.gn)
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
 
-          mkdir -p chromium-inspect && cd chromium-inspect
-          git init
-          git remote add origin https://chromium.googlesource.com/chromium/src.git
-          git config core.sparseCheckout true
-
-          # Only checkout the specific directories where layouts, eventfilter, and BUILD files live
-          cat << 'EOF' > .git/info/sparse-checkout
-          chrome/android/java/src/org/chromium/chrome/browser/compositor/
-          chrome/browser/ui/android/layouts/
-          chrome/android/BUILD.gn
-          chrome/android/chrome_java_sources.gni
-          chrome/android/features/tab_ui/
-          components/browser_ui/widget/android/
-          EOF
-
-          # Fetch the tag directly to FETCH_HEAD and checkout
-          git fetch --depth 1 origin tag "$VERSION"
-          git checkout FETCH_HEAD
-
-      - name: 1. Locate ScrollDirection Locally
-        working-directory: chromium-inspect
+      - name: Sparse-checkout only the likely candidate directories (one batched fetch)
         run: |
-          echo "=========================================================="
-          echo "=== 1. SEARCHING FOR ScrollDirection IN LOCAL FILES ==="
-          echo "=========================================================="
-          
-          echo "--- Any filename match? ---"
-          find . -iname "*scrolldirection*"
-          
-          echo "--- Any definition in Java files? ---"
-          grep -rnE "(interface|enum|class)\s+ScrollDirection" . || echo "No definition in sparse tree"
+          git clone --filter=blob:none --sparse --no-checkout --depth 1 \
+            --branch "$VERSION" \
+            https://chromium.googlesource.com/chromium/src.git chromium-src
+          cd chromium-src
+          git sparse-checkout set \
+            chrome/android/java/src/org/chromium/chrome/browser/compositor \
+            chrome/browser/ui/android/layouts \
+            components/browser_ui/widget/gesture \
+            chrome/android
+          git checkout "$VERSION"
 
-          echo "--- Any imports of ScrollDirection in layouts? ---"
-          grep -rn "import.*ScrollDirection" . || echo "No imports found in sparse tree"
-
-          echo "--- Searching EventFilter for ScrollDirection constants ---"
-          grep -rn -C 3 "ScrollDirection" chrome/android/java/src/org/chromium/chrome/browser/compositor/ || true
-          grep -rn -C 3 "ScrollDirection" chrome/browser/ui/android/layouts/ || true
-
-      - name: 2. Check Layout.java GN Target and supplier_java Deps
-        working-directory: chromium-inspect
+      - name: Search for ScrollDirection locally (no more network calls)
+        working-directory: chromium-src
         run: |
-          echo "=========================================================="
-          echo "=== 2. GN TARGET & DEPS AUDIT FOR Layout.java ==="
-          echo "=========================================================="
-          
-          echo "--- Which .gni file lists Layout.java? ---"
-          grep -rn "compositor/layouts/Layout\.java" . || true
-          grep -rn "LayoutManagerChromePhone\.java" . || true
+          set +e
+          echo "### 1. Any file literally named ScrollDirection.java? ###"
+          result=$(find . -iname "ScrollDirection.java" 2>/dev/null)
+          [ -n "$result" ] && echo "$result" || echo "(none found)"
 
-          echo "--- Check if chrome_java in chrome/android/BUILD.gn has supplier_java ---"
-          python3 -c '
-          with open("chrome/android/BUILD.gn", "r") as f:
-              lines = f.readlines()
-          in_target = False
-          found_supplier = False
-          for line in lines:
-              if "chrome_java" in line and "android_library" in line:
-                  in_target = True
-              if in_target and "deps = [" in line:
-                  pass
-              if in_target and "supplier_java" in line:
-                  print("FOUND supplier_java in chrome_java:", line.strip())
-                  found_supplier = True
-              if in_target and line.strip() == "}":
-                  break
-          if not found_supplier:
-              print("MISSING supplier_java in //chrome/android:chrome_java deps!")
-          '
+          echo
+          echo "### 2. Any file defining interface/enum ScrollDirection ###"
+          result=$(grep -rn "interface ScrollDirection\|enum ScrollDirection" --include=*.java . 2>/dev/null)
+          [ -n "$result" ] && echo "$result" || echo "(none found)"
 
-      - name: 3. Fetch M88 StackScroller and StackViewAnimation
+          echo
+          echo "### 3. Every import of ScrollDirection (any package) ###"
+          result=$(grep -rn "import.*ScrollDirection;" --include=*.java . 2>/dev/null)
+          [ -n "$result" ] && echo "$result" || echo "(none found)"
+
+          echo
+          echo "### 4. Broader fallback: any .java file with ScrollDirection in its content ###"
+          result=$(grep -rl "ScrollDirection" --include=*.java . 2>/dev/null | head -10)
+          [ -n "$result" ] && echo "$result" || echo "(none found)"
+
+      - name: Find the GN target listing Layout.java, and its full deps
+        working-directory: chromium-src
         run: |
-          echo "=========================================================="
-          echo "=== 3. FETCHING M88 StackScroller & StackViewAnimation ==="
-          echo "=========================================================="
-          mkdir -p m88_stack
+          set +e
+          echo "### Step 1: Find GN/gni files mentioning Layout.java or LayoutManagerChromePhone.java ###"
+          matches=$(grep -rl "compositor/layouts/phone/Layout.java\|LayoutManagerChromePhone.java" \
+                     --include=*.gn --include=*.gni chrome/android 2>/dev/null)
           
-          # Fetch directly from official Chromium M88 branch (88.0.4324.93)
-          M88_URL_BASE="https://chromium.googlesource.com/chromium/src/+/refs/tags/88.0.4324.93/chrome/android/java/src/org/chromium/chrome/browser/compositor/layouts/phone/stack"
-          
-          echo "Downloading StackScroller.java..."
-          curl -s "$M88_URL_BASE/StackScroller.java?format=TEXT" | base64 -d > m88_stack/StackScroller.java
-          head -n 25 m88_stack/StackScroller.java
-
-          echo "Downloading StackViewAnimation.java..."
-          curl -s "$M88_URL_BASE/StackViewAnimation.java?format=TEXT" | base64 -d > m88_stack/StackViewAnimation.java
-          head -n 25 m88_stack/StackViewAnimation.java
-
-          echo "Downloading M88 ScrollDirection if existed..."
-          M88_FILTER_BASE="https://chromium.googlesource.com/chromium/src/+/refs/tags/88.0.4324.93/chrome/android/java/src/org/chromium/chrome/browser/compositor/layouts/eventfilter"
-          curl -s "$M88_FILTER_BASE/ScrollDirection.java?format=TEXT" | base64 -d > m88_stack/ScrollDirection.java || true
-          if [ -s m88_stack/ScrollDirection.java ]; then
-              echo "M88 ScrollDirection.java found!"
-              cat m88_stack/ScrollDirection.java
-          else
-              echo "Checking EventFilter.java for ScrollDirection in M88..."
-              curl -s "$M88_FILTER_BASE/EventFilter.java?format=TEXT" | base64 -d | grep -n -C 5 "ScrollDirection" || true
+          if [ -z "$matches" ]; then
+            echo "[aerium] No exact matches found. Trying broader search..."
+            matches=$(grep -rl "Layout\.java" --include=*.gn --include=*.gni chrome/android 2>/dev/null | head -5)
           fi
 
-      - name: Upload Extracted M88 Files as Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: m88-missing-stack-files
-          path: m88_stack/
+          echo "Found in: $matches"
+
+          echo
+          for f in $matches; do
+            echo "=========================================="
+            echo "FILE: $f"
+            echo "=========================================="
+            cat "$f"
+            echo
+            echo "### Checking for supplier_java dependency in this file ###"
+            if grep -q "supplier_java\|base:supplier" "$f"; then
+              echo "[FOUND] supplier_java is already a dependency"
+              grep -n "supplier_java\|base:supplier" "$f"
+            else
+              echo "[NOT FOUND] supplier_java is NOT listed as a dependency — likely the ObservableSupplier compile error cause"
+            fi
+            echo
+          done
